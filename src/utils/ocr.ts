@@ -5,15 +5,16 @@ const PRIMARY_MODEL = 'gemini-4-hydrogen';
 const FALLBACK_MODEL = 'gemini-3.8-flash';
 
 const SYSTEM_INSTRUCTION = `당신은 완벽주의 영어 교재 및 단어장 데이터 추출 전문가입니다.
-첨부된 단어장 이미지들을 **첨부된 사진 순서 그대로(1번 페이지부터 순서대로)** 분석하여 pages 배열로 반환하세요.
+첨부된 1장의 단어장 페이지 이미지를 분석하여 페이지 메타데이터와 단어 목록을 JSON으로 반환하세요.
 
-[1. 페이지별 큰 단원 제목(bigUnitHeader) 판별 규칙 — 가장 중요!]
-- 각 이미지 상단에 "Unit 09", "Unit 10", "Unit 11", "Day 01"처럼 **새 단원이 시작되는 큰 제목 배너**가 적혀 있을 때만 bigUnitHeader에 그 단원명을 적으세요 (예: "Unit 09").
-- 만약 해당 페이지에 큰 단원 제목 없이 "Intermediate 09-21", "Basic 01-08", 또는 페이지 번호("67", "68")만 적혀 있는 **이어지는 페이지(연속 페이지)**라면, 절대 단원명을 추측해서 적지 말고 bigUnitHeader를 반드시 빈 문자열("")로 비워두세요!
+[1. 페이지 메타데이터 추출 규칙 — 유닛 분류 핵심!]
+- pageNumber: 페이지 좌우 하단 모서리에 적힌 책 쪽수(예: 66, 67, 68)를 정수로 적으세요. 안 보이면 0으로 적으세요.
+- bigUnitHeader: 페이지 맨 위에 "Unit 09", "Unit 10", "Unit 11", "Day 01"처럼 **새 단원이 시작되는 큰 제목 배너**가 적혀 있을 때만 그 단원명을 적으세요 (예: "Unit 11"). 만약 해당 페이지에 큰 단원 제목 없이 "Intermediate 09-21", "Basic 01-08", 또는 표만 이어지는 **연속 페이지**라면 절대 추측하지 말고 반드시 빈 문자열("")로 비워두세요!
+- firstWordNumber: 이 페이지 본문 표의 맨 첫 번째 단어 왼쪽에 적힌 번호(예: "01"이면 1, "09"이면 9, "22"이면 22)를 정수로 적으세요.
 
 [2. 단어·발음기호·다중 뜻·예문·한글번역 완벽 추출 규칙]
-- word (표제어): 문제 번호(01, 02 등)를 제외한 정확한 영어 단어 또는 숙어를 추출하세요. (하단 Self Check 체크박스 등 중복 항목은 제외)
-- phonetic (발음기호): 단어 아래나 옆에 적힌 발음기호를 대괄호 포함 그대로 추출하세요 (예: "[ə́ːrli]", "[freʃ]"). 사진에 발음기호가 없으면 표준 IPA 발음기호를 생성해 채우세요.
+- word (표제어): 문제 번호(01, 02 등)를 제외한 정확한 영어 단어 또는 숙어를 추출하세요. (하단 Self Check 체크박스나 보충 단어 상자는 제외하고 본문 번호 단어만 모두 추출)
+- phonetic (발음기호): 단어 아래나 옆에 적힌 발음기호를 대괄호 포함 그대로 추출하세요 (예: "[ə́ːrli]", "[freʃ]"). 사진에 없으면 표준 IPA 발음기호를 생성해 채우세요.
 - meaning (다중 품사·뜻·반의어·파생어·영영풀이 전체):
   사진 가운데 칸에 적힌 모든 품사와 뜻, 반의어([반]), 유의어([유]), 파생어([파]), 영영풀이([영영])를 자르지 말고 줄바꿈(\\n)으로 구분해 모두 적으세요.
 - example (모든 예문 + 한글 번역):
@@ -101,6 +102,19 @@ export interface RawExtractedItem {
     example?: string;
 }
 
+interface SinglePageResult {
+    pageIndex: number;
+    pageNumber: number;
+    bigUnitHeader: string;
+    firstWordNumber: number;
+    words: Array<{
+        word: string;
+        phonetic: string;
+        meaning: string;
+        example: string;
+    }>;
+}
+
 function extractCleanUnitHeader(rawHeader?: string): string {
     if (!rawHeader) return '';
     const match = String(rawHeader).match(/\b(unit|day|part|chapter|lesson)\s*(\d+)\b/i);
@@ -110,46 +124,50 @@ function extractCleanUnitHeader(rawHeader?: string): string {
     return '';
 }
 
-async function callGeminiVisionModel(
+function incrementUnitName(unitStr: string): string {
+    const match = String(unitStr).match(/^(.*?\b(?:Unit|Day|Part|Chapter|Lesson)\s+)(\d+)$/i);
+    if (match) {
+        const nextNum = parseInt(match[2], 10) + 1;
+        const padded = nextNum < 10 ? `0${nextNum}` : `${nextNum}`;
+        return `${match[1]}${padded}`;
+    }
+    return unitStr;
+}
+
+async function callSinglePageGemini(
     modelName: string,
-    images: Array<{ base64: string; mimeType: string }>,
+    image: { base64: string; mimeType: string },
+    pageIndex: number,
+    totalCount: number,
     apiKey: string,
     useThinkingConfig: boolean
 ): Promise<Response> {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
     const generationConfig: Record<string, unknown> = {
-        maxOutputTokens: 16384,
+        maxOutputTokens: 8192,
         responseMimeType: 'application/json',
         responseSchema: {
             type: 'OBJECT',
             properties: {
-                pages: {
+                pageNumber: { type: 'INTEGER' },
+                bigUnitHeader: { type: 'STRING' },
+                firstWordNumber: { type: 'INTEGER' },
+                words: {
                     type: 'ARRAY',
                     items: {
                         type: 'OBJECT',
                         properties: {
-                            pageIndex: { type: 'INTEGER' },
-                            bigUnitHeader: { type: 'STRING' },
-                            words: {
-                                type: 'ARRAY',
-                                items: {
-                                    type: 'OBJECT',
-                                    properties: {
-                                        word: { type: 'STRING' },
-                                        phonetic: { type: 'STRING' },
-                                        meaning: { type: 'STRING' },
-                                        example: { type: 'STRING' },
-                                    },
-                                    required: ['word', 'phonetic', 'meaning', 'example'],
-                                },
-                            },
+                            word: { type: 'STRING' },
+                            phonetic: { type: 'STRING' },
+                            meaning: { type: 'STRING' },
+                            example: { type: 'STRING' },
                         },
-                        required: ['pageIndex', 'bigUnitHeader', 'words'],
+                        required: ['word', 'phonetic', 'meaning', 'example'],
                     },
                 },
             },
-            required: ['pages'],
+            required: ['pageNumber', 'bigUnitHeader', 'firstWordNumber', 'words'],
         },
     };
 
@@ -161,19 +179,15 @@ async function callGeminiVisionModel(
 
     const parts: Array<Record<string, unknown>> = [
         {
-            text: `총 ${images.length}장의 연속된 단어장 페이지입니다. 사진 1번부터 ${images.length}번까지 순서대로 pages 배열에 담아 반환하세요. 큰 단원 제목(Unit XX 등)이 있는 페이지만 bigUnitHeader를 적고, 이어지는 페이지는 빈 문자열("")로 비워두세요.`,
+            text: `전체 ${totalCount}장 중 ${pageIndex}번째 단어장 페이지입니다. 상단 큰 단원 제목(bigUnitHeader), 첫 단어 번호(firstWordNumber), 하단 쪽수(pageNumber)와 본문 표의 모든 단어를 빠짐없이 추출하세요.`,
+        },
+        {
+            inlineData: {
+                mimeType: image.mimeType,
+                data: image.base64,
+            },
         },
     ];
-
-    images.forEach((img, idx) => {
-        parts.push({ text: `[사진 ${idx + 1}번 페이지]` });
-        parts.push({
-            inlineData: {
-                mimeType: img.mimeType,
-                data: img.base64,
-            },
-        });
-    });
 
     return fetch(endpoint, {
         method: 'POST',
@@ -189,18 +203,30 @@ async function callGeminiVisionModel(
     });
 }
 
-export async function extractVocabFromImages(
-    images: Array<{ base64: string; mimeType: string }>,
+async function analyzeSinglePage(
+    image: { base64: string; mimeType: string },
+    pageIndex: number,
+    totalCount: number,
     apiKey: string
-): Promise<RawExtractedItem[]> {
-    const cleanKey = apiKey.trim();
-    if (!cleanKey) {
-        throw new Error('Gemini API 키가 설정되지 않았습니다. API 키를 먼저 저장해 주세요.');
-    }
+): Promise<SinglePageResult> {
+    let response = await callSinglePageGemini(
+        PRIMARY_MODEL,
+        image,
+        pageIndex,
+        totalCount,
+        apiKey,
+        true
+    );
 
-    let response = await callGeminiVisionModel(PRIMARY_MODEL, images, cleanKey, true);
     if (!response.ok && (response.status === 400 || response.status === 404)) {
-        response = await callGeminiVisionModel(FALLBACK_MODEL, images, cleanKey, false);
+        response = await callSinglePageGemini(
+            FALLBACK_MODEL,
+            image,
+            pageIndex,
+            totalCount,
+            apiKey,
+            false
+        );
     }
 
     if (!response.ok) {
@@ -217,28 +243,63 @@ export async function extractVocabFromImages(
         }>;
     };
 
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!rawText) {
-        throw new Error('모델로부터 유효한 응답 텍스트를 받지 못했습니다.');
-    }
-
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     const cleanedJson = rawText
         .replace(/^```json\s*/i, '')
         .replace(/```\s*$/i, '')
         .trim();
 
     const parsed = JSON.parse(cleanedJson) as {
-        pages?: Array<{
-            pageIndex?: number;
-            bigUnitHeader?: string;
-            words?: Array<Record<string, unknown>>;
-        }>;
+        pageNumber?: number;
+        bigUnitHeader?: string;
+        firstWordNumber?: number;
+        words?: Array<Record<string, unknown>>;
     };
 
-    const pages = Array.isArray(parsed.pages) ? parsed.pages : [];
-    pages.sort((a, b) => (a.pageIndex || 0) - (b.pageIndex || 0));
+    const rawWords = Array.isArray(parsed.words) ? parsed.words : [];
+    const words = rawWords
+        .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+        .map((item) => ({
+            word: typeof item.word === 'string' ? item.word.trim() : '',
+            phonetic: typeof item.phonetic === 'string' ? item.phonetic.trim() : '',
+            meaning: typeof item.meaning === 'string' ? item.meaning.trim() : '',
+            example: typeof item.example === 'string' ? item.example.trim() : '',
+        }))
+        .filter((item) => item.word.length > 0 && item.meaning.length > 0);
 
-    // 첫 번째 큰 제목 찾기
+    return {
+        pageIndex,
+        pageNumber: Number(parsed.pageNumber) || 0,
+        bigUnitHeader: typeof parsed.bigUnitHeader === 'string' ? parsed.bigUnitHeader : '',
+        firstWordNumber: Number(parsed.firstWordNumber) || 0,
+        words,
+    };
+}
+
+export async function extractVocabFromImages(
+    images: Array<{ base64: string; mimeType: string }>,
+    apiKey: string
+): Promise<RawExtractedItem[]> {
+    const cleanKey = apiKey.trim();
+    if (!cleanKey) {
+        throw new Error('Gemini API 키가 설정되지 않았습니다. API 키를 먼저 저장해 주세요.');
+    }
+
+    // 10장 이상도 토큰 잘림이나 유닛 누락이 없도록 각 페이지를 개별 정밀 분석
+    const pages: SinglePageResult[] = [];
+    for (let i = 0; i < images.length; i += 1) {
+        const pageResult = await analyzeSinglePage(images[i], i + 1, images.length, cleanKey);
+        pages.push(pageResult);
+    }
+
+    // 하단 쪽수(pageNumber)가 인식된 경우 교재 쪽수 순으로 정렬, 없으면 업로드 순서 유지
+    pages.sort((a, b) => {
+        if (a.pageNumber > 0 && b.pageNumber > 0 && a.pageNumber !== b.pageNumber) {
+            return a.pageNumber - b.pageNumber;
+        }
+        return a.pageIndex - b.pageIndex;
+    });
+
     let activeUnit = 'Unit 01';
     const firstWithHeader = pages.find((p) => extractCleanUnitHeader(p.bigUnitHeader));
     if (firstWithHeader) {
@@ -246,28 +307,31 @@ export async function extractVocabFromImages(
     }
 
     const results: RawExtractedItem[] = [];
+    let hasSeenWordsInCurrentUnit = false;
 
     for (const page of pages) {
-        const header = extractCleanUnitHeader(page.bigUnitHeader);
-        if (header) {
-            // 새로운 큰 제목 페이지가 나타나면 그 페이지부터 새 유닛 적용
-            activeUnit = header;
+        const detectedHeader = extractCleanUnitHeader(page.bigUnitHeader);
+        const firstNum = page.firstWordNumber;
+
+        if (detectedHeader && (firstNum <= 1 || !hasSeenWordsInCurrentUnit)) {
+            // 1순위: 큰 단원 제목(Unit 09, Unit 10, Unit 11)이 감지되면 새 유닛으로 전환
+            activeUnit = detectedHeader;
+            hasSeenWordsInCurrentUnit = false;
+        } else if (firstNum === 1 && hasSeenWordsInCurrentUnit) {
+            // 2순위: 큰 제목이 사진에서 잘렸더라도 첫 단어 번호가 01번으로 리셋되면 다음 유닛으로 +1 전환
+            activeUnit = detectedHeader || incrementUnitName(activeUnit);
+            hasSeenWordsInCurrentUnit = false;
         }
 
-        const words = Array.isArray(page.words) ? page.words : [];
-        for (const item of words) {
-            if (!item || typeof item !== 'object') continue;
-            const word = typeof item.word === 'string' ? item.word.trim() : '';
-            const meaning = typeof item.meaning === 'string' ? item.meaning.trim() : '';
-            if (!word || !meaning) continue;
-
+        for (const item of page.words) {
             results.push({
                 unit: activeUnit,
-                word,
-                phonetic: typeof item.phonetic === 'string' ? item.phonetic.trim() : '',
-                meaning,
-                example: typeof item.example === 'string' ? item.example.trim() : '',
+                word: item.word,
+                phonetic: item.phonetic,
+                meaning: item.meaning,
+                example: item.example,
             });
+            hasSeenWordsInCurrentUnit = true;
         }
     }
 
