@@ -89,6 +89,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const SPEECH_RATES = [0.5, 0.7, 0.8, 0.9, 1.0];
+const SPEECH_RATE_STORAGE_KEY = 'soi_vocab_speech_rate_v1';
 
 function formatInterval(due: Date, now: Date): string {
   const diffMs = Math.max(0, due.getTime() - now.getTime());
@@ -128,14 +129,13 @@ function resolveItemFolder(targetInput: string, detectedUnit?: string): string {
   const unitClean = detectedUnit ? formatFolderSegment(detectedUnit) : '';
 
   if (!raw) {
-    return unitClean ? `Vocabulary/${unitClean}` : 'Vocabulary/Unit 01';
+    return unitClean ? `Vocabulary Engine/${unitClean}` : 'Vocabulary Engine/Unit 01';
   }
 
   if (raw.includes('/')) {
     const parts = raw.split('/');
-    const book = formatFolderSegment(parts[0]) || 'Vocabulary';
+    const book = formatFolderSegment(parts[0]) || 'Vocabulary Engine';
     const rest = parts.slice(1).join('/').trim();
-    // 사용자가 "보카엔진/unit 10, unit 11"처럼 여러 유닛을 적었거나 비워둔 경우 AI 감지 유닛으로 자동 분리
     if ((!rest || rest.includes(',')) && unitClean) {
       return `${book}/${unitClean}`;
     }
@@ -144,7 +144,6 @@ function resolveItemFolder(targetInput: string, detectedUnit?: string): string {
   }
 
   const formattedInput = formatFolderSegment(raw);
-  // 책 이름만 적은 경우 (예: "보카엔진") -> "보카엔진/Unit 10"으로 하위 폴더 자동 생성
   if (unitClean && formattedInput.toLowerCase() !== unitClean.toLowerCase()) {
     return `${formattedInput}/${unitClean}`;
   }
@@ -160,20 +159,21 @@ export function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('study');
   const [studyMode, setStudyMode] = useState<StudyMode>('flashcard');
   const [autoSpeak, setAutoSpeak] = useState<boolean>(true);
-  const [speechRate, setSpeechRate] = useState<number>(0.9);
+  const [speechRate, setSpeechRate] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(SPEECH_RATE_STORAGE_KEY));
+    return SPEECH_RATES.includes(saved) ? saved : 0.9;
+  });
+  const speechRateRef = useRef<number>(speechRate);
+  const speechTimeoutRef = useRef<number | null>(null);
 
-  // 3번 요청: 처음 진입 시 문제집 폴더 목록이 보이지 않도록 기본값 false 지정
   const [isFolderSidebarOpen, setIsFolderSidebarOpen] = useState<boolean>(false);
-  // 4번 요청: 하단 통계글은 평소에 숨기고 버튼을 누를 때만 표시
   const [showBottomStats, setShowBottomStats] = useState<boolean>(false);
   const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
 
-  // PWA 안드로이드 설치 프롬프트 상태
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(
       null
   );
 
-  // 폴더 및 관리 모달 상태
   const [studyCategory, setStudyCategory] = useState<string>('ALL');
   const [listCategory, setListCategory] = useState<string>('ALL');
   const [targetCategory, setTargetCategory] = useState<string>('Vocabulary Engine');
@@ -181,7 +181,6 @@ export function App() {
   const [newParentFolder, setNewParentFolder] = useState<string>('');
   const [newChildFolder, setNewChildFolder] = useState<string>('');
 
-  // 플래시카드 및 스펠링 상태
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
   const [typedAnswer, setTypedAnswer] = useState<string>('');
   const [spellingResult, setSpellingResult] = useState<'correct' | 'wrong' | null>(null);
@@ -189,7 +188,6 @@ export function App() {
   const cardStartTimeRef = useRef<number>(Date.now());
   const spellingInputRef = useRef<HTMLInputElement | null>(null);
 
-  // 단어 추가 및 카메라 OCR 상태
   const [addSubTab, setAddSubTab] = useState<'camera' | 'single' | 'bulk'>('camera');
   const [newWord, setNewWord] = useState<string>('');
   const [newPhonetic, setNewPhonetic] = useState<string>('');
@@ -208,13 +206,11 @@ export function App() {
   const [extractedDrafts, setExtractedDrafts] = useState<ExtractedVocabDraft[]>([]);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
-  // NAS 동기화 상태
   const [nasWebhookUrl, setNasWebhookUrl] = useState<string>(() => loadNasWebhookUrl());
   const [nasUrlInput, setNasUrlInput] = useState<string>(() => loadNasWebhookUrl());
   const [showNasConfig, setShowNasConfig] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // 단어 목록 검색 및 수정 상태
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editWord, setEditWord] = useState<string>('');
@@ -238,7 +234,21 @@ export function App() {
     saveStudyStats(stats);
   }, [stats]);
 
-  // 안드로이드 Chrome PWA 앱 설치 이벤트 감지
+  useEffect(() => {
+    speechRateRef.current = speechRate;
+    localStorage.setItem(SPEECH_RATE_STORAGE_KEY, String(speechRate));
+  }, [speechRate]);
+
+  // 브라우저 TTS 음성 목록 미리 로드 (모바일 배속 정상 작동용)
+  useEffect(() => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.getVoices();
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.getVoices();
+      };
+    }
+  }, []);
+
   useEffect(() => {
     const handler = (e: Event) => {
       e.preventDefault();
@@ -315,7 +325,6 @@ export function App() {
     return { wins, attempts, rightPct, avgSec };
   }, [selectedPoolItems]);
 
-  // 8번 & 11번 해결: 방금 본 카드가 연속으로 또 나오지 않도록 lastSolvedAt 오름차순 + FSRS due 정렬
   const dueItems = useMemo(() => {
     const endOfToday = new Date().setHours(23, 59, 59, 999);
     const list = selectedPoolItems.filter((item) => item.card.due.getTime() <= endOfToday);
@@ -324,7 +333,7 @@ export function App() {
       const aLast = a.itemStats?.lastSolvedAt || 0;
       const bLast = b.itemStats?.lastSolvedAt || 0;
       if (aLast !== bLast) {
-        return aLast - bLast; // 아직 안 본 카드(0)가 무조건 먼저 나오고, 방금 다시/어려움을 누른 카드는 맨 뒤로 이동
+        return aLast - bLast;
       }
       return a.card.due.getTime() - b.card.due.getTime();
     });
@@ -336,13 +345,34 @@ export function App() {
     cardStartTimeRef.current = Date.now();
   }, [currentItem?.id, studyCategory]);
 
+  // 5번 해결: 모바일/PC 브라우저에서 배속(rate)이 무시되지 않도록 60ms 딜레이 + 원어민 음성 바인딩
   const speakWord = (text: string, customRate?: number) => {
     if (!('speechSynthesis' in window) || !text.trim()) return;
+
+    if (speechTimeoutRef.current !== null) {
+      window.clearTimeout(speechTimeoutRef.current);
+    }
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text.trim());
-    utterance.lang = 'en-US';
-    utterance.rate = customRate ?? speechRate;
-    window.speechSynthesis.speak(utterance);
+
+    const targetRate = customRate ?? speechRateRef.current;
+    const cleanText = text.trim();
+
+    speechTimeoutRef.current = window.setTimeout(() => {
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      const voices = window.speechSynthesis.getVoices();
+      const enVoice =
+          voices.find((v) => v.lang === 'en-US' && v.localService) ||
+          voices.find((v) => v.lang === 'en-US') ||
+          voices.find((v) => v.lang.startsWith('en'));
+
+      if (enVoice) {
+        utterance.voice = enVoice;
+      }
+      utterance.lang = 'en-US';
+      utterance.rate = targetRate;
+      utterance.pitch = 1.0;
+      window.speechSynthesis.speak(utterance);
+    }, 60);
   };
 
   useEffect(() => {
@@ -353,7 +383,7 @@ export function App() {
         currentItem &&
         !isFlipped
     ) {
-      speakWord(currentItem.word);
+      speakWord(currentItem.word, speechRateRef.current);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, studyMode, autoSpeak, currentItem?.id, isFlipped]);
@@ -372,7 +402,6 @@ export function App() {
     cardStartTimeRef.current = Date.now();
   };
 
-  // 폴더 생성/이름변경/삭제
   const handleAddFolderHierarchy = () => {
     const p = formatFolderSegment(newParentFolder.replace(/\//g, ' '));
     const c = formatFolderSegment(newChildFolder.replace(/\//g, ' '));
@@ -412,7 +441,10 @@ export function App() {
           const norm = normalizeCategory(item.tag);
           if (norm === oldPath) return { ...item, tag: cleaned };
           if (norm.startsWith(`${oldPath}/`)) {
-            return { ...item, tag: normalizeCategory(`${cleaned}/${norm.slice(oldPath.length + 1)}`) };
+            return {
+              ...item,
+              tag: normalizeCategory(`${cleaned}/${norm.slice(oldPath.length + 1)}`),
+            };
           }
           return item;
         })
@@ -474,7 +506,6 @@ export function App() {
     showToast(`🔄 [${label}] 통계 및 복습 일정이 초기화되었습니다.`);
   };
 
-  // 8번 & 11번: FSRS 평가 처리 (보통/쉬움은 최소 내일 이후로 졸업시켜 오늘 중복 출제 방지)
   const handleRate = (grade: Grade) => {
     if (!currentItem) return;
     const nowDate = new Date();
@@ -482,7 +513,6 @@ export function App() {
     const record = scheduler.repeat(currentItem.card, nowDate)[grade];
     const nextCard = { ...record.card };
 
-    // 보통(Good) 또는 쉬움(Easy)을 누른 경우 오늘 다시 중복으로 나오지 않도록 최소 내일 자정 이후로 예약
     if (grade === Rating.Good || grade === Rating.Easy) {
       const tomorrowStart = new Date(
           nowDate.getFullYear(),
@@ -497,7 +527,6 @@ export function App() {
       }
     }
 
-    // 승패 판정: 오직 '쉬움(Rating.Easy)'만 승(Win), 나머지는 패(Loss)
     const isWin =
         grade === Rating.Easy &&
         (studyMode !== 'spelling' || spellingResult === 'correct');
@@ -538,7 +567,6 @@ export function App() {
     speakWord(currentItem.word);
   };
 
-  // NAS 동기화
   const handleSyncFromNas = async (
       silent: boolean = false,
       overrideUrl?: string,
@@ -601,7 +629,6 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 카메라 OCR 및 다중 유닛 자동 분리 저장
   const handleSaveApiKey = () => {
     saveGeminiApiKey(apiKeyInput);
     const saved = loadGeminiApiKey();
@@ -753,8 +780,8 @@ export function App() {
 
   const handleExportJson = () => {
     const payload = {
-      app: 'Soi Vocab',
-      version: 5,
+      app: '소이의 단어 암기장',
+      version: 6,
       exportedAt: new Date().toISOString(),
       categories: allCategories,
       items: selectedPoolItems.length > 0 ? selectedPoolItems : items,
@@ -877,105 +904,17 @@ export function App() {
 
   return (
       <div className="app-shell">
+        {/* 3번 요청: 최상단에는 '소이의 단어 암기장' 제목과 설명 글만 배치 */}
         <header className="app-header">
           <div>
-            <h1 className="app-title">Soi Vocab</h1>
+            <h1 className="app-title">소이의 단어 암기장</h1>
             <p className="app-subtitle">전체 {items.length}단어 · FSRS 망각곡선 단어장</p>
-          </div>
-          <div className="header-badges">
-            {deferredPrompt && (
-                <button
-                    type="button"
-                    className="install-app-btn"
-                    onClick={handleInstallPwa}
-                    title="안드로이드 홈 화면에 앱 설치"
-                >
-                  <Smartphone size={14} />
-                  앱 설치
-                </button>
-            )}
-            <button
-                type="button"
-                className="gg-open-btn"
-                onClick={() => setShowGgModal(true)}
-            >
-              <Settings2 size={14} />
-              폴더/통계 관리
-            </button>
-            <button
-                type="button"
-                className="mini-icon-btn"
-                onClick={() => setIsFolderSidebarOpen((prev) => !prev)}
-                title={isFolderSidebarOpen ? '폴더 목록 닫기' : '폴더 목록 열기'}
-            >
-              {isFolderSidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
-            </button>
-            <button
-                type="button"
-                className="mini-icon-btn"
-                onClick={() => setShowNasConfig((prev) => !prev)}
-                title="NAS n8n 웹훅 설정"
-            >
-              <Server size={15} />
-            </button>
-            {nasWebhookUrl && (
-                <button
-                    type="button"
-                    className="mini-icon-btn"
-                    onClick={() => handleSyncFromNas(false, undefined, false)}
-                    title="NAS에서 텔레그램 단어 동기화"
-                >
-                  <RefreshCw size={15} className={isSyncing ? 'spin' : ''} />
-                </button>
-            )}
-            <div className="streak-pill" title="연속 학습일">
-              <Flame size={14} />
-              {stats.streak}일째
-            </div>
-            <div className="due-pill">남은 복습 {dueItems.length}</div>
           </div>
         </header>
 
-        {showNasConfig && (
-            <div className="api-key-box">
-              <div>
-                <strong>NAS n8n Production Webhook 주소</strong>
-              </div>
-              <div className="api-key-row">
-                <input
-                    type="url"
-                    className="mini-input"
-                    style={{ flex: 1 }}
-                    value={nasUrlInput}
-                    onChange={(e) => setNasUrlInput(e.target.value)}
-                />
-                <button type="button" className="submit-btn" onClick={handleSaveNasWebhook}>
-                  저장
-                </button>
-              </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <button
-                    type="button"
-                    className="secondary-btn"
-                    onClick={() => handleSyncFromNas(false, nasUrlInput, true)}
-                >
-                  🔄 NAS 단어 전체 다시 불러오기
-                </button>
-                <button
-                    type="button"
-                    className="secondary-btn"
-                    style={{ color: '#dc2626' }}
-                    onClick={handleClearNasRemote}
-                >
-                  🗑️ NAS 대기열 비우기
-                </button>
-              </div>
-            </div>
-        )}
-
         {toastMsg && <div className="toast-banner">{toastMsg}</div>}
 
-        {/* 폴더 목록 & 통계 관리 모달 (FSRS와 충돌하는 출제 순서 및 명예의 전당 제거됨) */}
+        {/* 폴더 목록 & 통계 관리 모달 */}
         {showGgModal && (
             <div className="gg-modal-backdrop" onClick={() => setShowGgModal(false)}>
               <div className="gg-modal" onClick={(e) => e.stopPropagation()}>
@@ -1173,7 +1112,405 @@ export function App() {
         )}
 
         {activeTab === 'study' && (
-            <div className={`study-layout ${isFolderSidebarOpen ? '' : 'sidebar-collapsed'}`}>
+            <div className="study-main">
+              {/* 1순위: 제목 바로 아래 플래시카드 최상단 배치 */}
+              {!currentItem ? (
+                  <div className="done-card">
+                    <div className="done-icon">
+                      <Sparkles size={26} />
+                    </div>
+                    <h2 style={{ margin: '0 0 6px', fontSize: '1.15rem' }}>
+                      [{studyCategory === 'ALL' ? '전체 단어장' : studyCategory}] 오늘 복습 완료!
+                    </h2>
+                    <p style={{ color: '#64748b', fontSize: '0.86rem', marginBottom: 16 }}>
+                      오늘 총 <strong>{stats.todayReviewed}문제</strong> (쉬움 {stats.todayCorrect} /
+                      재학습 {stats.todayWrong}) 풀이를 마쳤습니다.
+                    </p>
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      {studyCategory !== 'ALL' && (
+                          <button
+                              type="button"
+                              className="secondary-btn"
+                              onClick={() => setStudyCategory('ALL')}
+                          >
+                            전체 단어장 보기
+                          </button>
+                      )}
+                      <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => setIsFolderSidebarOpen(true)}
+                      >
+                        📂 다른 폴더 선택
+                      </button>
+                      <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => setActiveTab('add')}
+                      >
+                        + 단어 추가하기
+                      </button>
+                    </div>
+                  </div>
+              ) : studyMode === 'flashcard' ? (
+                  <>
+                    <div
+                        className="study-card clickable"
+                        onClick={() => setIsFlipped((prev) => !prev)}
+                    >
+                      <div className="card-top-row">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span className="badge-state">
+                      {getStateLabel(currentItem.card.state)}
+                    </span>
+                          <span className="cat-badge">
+                      <FolderOpen size={11} />
+                            {normalizeCategory(currentItem.tag)}
+                    </span>
+                        </div>
+                        <button
+                            type="button"
+                            className="icon-circle-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              speakWord(currentItem.word, speechRate);
+                            }}
+                        >
+                          <Volume2 size={19} />
+                        </button>
+                      </div>
+
+                      <div className="card-center">
+                        <h2 className="word-display">{currentItem.word}</h2>
+                        {currentItem.phonetic && (
+                            <div className="phonetic-display">{currentItem.phonetic}</div>
+                        )}
+
+                        {isFlipped && (
+                            <>
+                              <div className="meaning-display">{currentItem.meaning}</div>
+                              {currentItem.example && (
+                                  <div className="example-box">{currentItem.example}</div>
+                              )}
+                            </>
+                        )}
+                      </div>
+
+                      <div className="flip-hint">
+                        <RotateCcw size={13} />
+                        {!isFlipped
+                            ? '카드를 터치해 품사별 뜻 · 반의어 · 예문/해석 보기'
+                            : '다시/어려움은 오늘 마지막에 다시 나오고, 보통/쉬움은 다음 복습일로 넘어갑니다'}
+                      </div>
+                    </div>
+
+                    {isFlipped && (
+                        <div className="rating-section">
+                          <div className="rating-grid">
+                            {ratingOptions.map((opt) => (
+                                <button
+                                    key={opt.grade}
+                                    type="button"
+                                    className={`rate-btn ${opt.className}`}
+                                    onClick={() => handleRate(opt.grade)}
+                                >
+                                  <span className="rate-label">{opt.label}</span>
+                                  <span className="rate-interval">{opt.intervalText}</span>
+                                </button>
+                            ))}
+                          </div>
+                        </div>
+                    )}
+                  </>
+              ) : (
+                  <>
+                    <div className="study-card">
+                      <div className="card-top-row">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span className="cat-badge">
+                      <FolderOpen size={11} />
+                      {normalizeCategory(currentItem.tag)}
+                    </span>
+                        </div>
+                        <button
+                            type="button"
+                            className="icon-circle-btn"
+                            onClick={() => speakWord(currentItem.word, speechRate)}
+                        >
+                          <Volume2 size={19} />
+                        </button>
+                      </div>
+
+                      <div className="card-center">
+                        <div className="spelling-prompt-label">다음 뜻에 맞는 영어 스펠링을 입력하세요</div>
+                        <div className="meaning-display">{currentItem.meaning}</div>
+
+                        {!spellingResult && (
+                            <div className="spelling-helpers">
+                              <button
+                                  type="button"
+                                  className="helper-chip"
+                                  onClick={() => speakWord(currentItem.word, speechRate)}
+                              >
+                                <Volume2 size={14} />
+                                발음 듣기
+                              </button>
+                              <button
+                                  type="button"
+                                  className="helper-chip"
+                                  onClick={() => setShowHint((prev) => !prev)}
+                              >
+                                <HelpCircle size={14} />
+                                첫 글자 힌트
+                              </button>
+                            </div>
+                        )}
+
+                        {showHint && !spellingResult && (
+                            <div className="hint-text">
+                              {currentItem.word[0]}{' '}
+                              {'_ '.repeat(Math.max(0, currentItem.word.length - 1))} (
+                              {currentItem.word.length}글자)
+                            </div>
+                        )}
+
+                        {!spellingResult ? (
+                            <form className="spelling-form" onSubmit={handleCheckSpelling}>
+                              <input
+                                  ref={spellingInputRef}
+                                  type="text"
+                                  className="spelling-input"
+                                  placeholder="영어 단어 입력..."
+                                  value={typedAnswer}
+                                  onChange={(e) => setTypedAnswer(e.target.value)}
+                                  autoCapitalize="none"
+                                  autoCorrect="off"
+                                  spellCheck={false}
+                              />
+                              <button type="submit" className="submit-btn">
+                                확인
+                              </button>
+                            </form>
+                        ) : (
+                            <div className={`spelling-feedback ${spellingResult}`}>
+                              <div className="feedback-badge">
+                                {spellingResult === 'correct' ? (
+                                    <>
+                                      <Check size={18} />
+                                      정답입니다!
+                                    </>
+                                ) : (
+                                    <>
+                                      <X size={18} />
+                                      스펠링을 다시 확인해 보세요
+                                    </>
+                                )}
+                              </div>
+                              <div className="answer-compare">
+                                정답: <strong>{currentItem.word}</strong>{' '}
+                                {currentItem.phonetic && <span>{currentItem.phonetic}</span>}
+                              </div>
+                              {currentItem.example && (
+                                  <div className="example-box">{currentItem.example}</div>
+                              )}
+                            </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {spellingResult && (
+                        <div className="rating-section">
+                          <div className="rating-grid">
+                            {ratingOptions.map((opt) => (
+                                <button
+                                    key={opt.grade}
+                                    type="button"
+                                    className={`rate-btn ${opt.className}`}
+                                    onClick={() => handleRate(opt.grade)}
+                                >
+                                  <span className="rate-label">{opt.label}</span>
+                                  <span className="rate-interval">{opt.intervalText}</span>
+                                </button>
+                            ))}
+                          </div>
+                        </div>
+                    )}
+                  </>
+              )}
+
+              {/* 2순위 (카드 아래): 모드 전환 & 5단계 TTS 배속 컨트롤 바 */}
+              <div className="toolbar">
+                <div className="mode-switch">
+                  <button
+                      type="button"
+                      className={`mode-btn ${studyMode === 'flashcard' ? 'active' : ''}`}
+                      onClick={() => {
+                        setStudyMode('flashcard');
+                        resetCardInteraction();
+                      }}
+                  >
+                    <Layers size={15} />
+                    플래시카드
+                  </button>
+                  <button
+                      type="button"
+                      className={`mode-btn ${studyMode === 'spelling' ? 'active' : ''}`}
+                      onClick={() => {
+                        setStudyMode('spelling');
+                        resetCardInteraction();
+                      }}
+                  >
+                    <Keyboard size={15} />
+                    스펠링 테스트
+                  </button>
+                </div>
+
+                <div className="toolbar-actions">
+                  <div className="speed-group" title="발음 읽어주기 속도">
+                    {SPEECH_RATES.map((r) => (
+                        <button
+                            key={r}
+                            type="button"
+                            className={`speed-chip ${speechRate === r ? 'active' : ''}`}
+                            onClick={() => {
+                              speechRateRef.current = r;
+                              setSpeechRate(r);
+                              if (currentItem) speakWord(currentItem.word, r);
+                            }}
+                        >
+                          {r}x
+                        </button>
+                    ))}
+                  </div>
+                  <button
+                      type="button"
+                      className={`auto-audio-btn ${autoSpeak ? 'on' : ''}`}
+                      onClick={() => setAutoSpeak((prev) => !prev)}
+                  >
+                    <Volume2 size={14} />
+                    {autoSpeak ? '자동' : '수동'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 3순위 (카드 아래): 폴더/통계 관리 버튼, 폴더 열기, NAS 동기화, 연속 학습일, 남은 복습 */}
+              <div
+                  className="header-badges"
+                  style={{
+                    justifyContent: 'space-between',
+                    background: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: 14,
+                    padding: '10px 12px',
+                  }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <button
+                      type="button"
+                      className="gg-open-btn"
+                      onClick={() => setShowGgModal(true)}
+                  >
+                    <Settings2 size={14} />
+                    폴더/통계 관리
+                  </button>
+                  <button
+                      type="button"
+                      className="secondary-btn"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '6px 10px',
+                        fontSize: '0.76rem',
+                      }}
+                      onClick={() => setIsFolderSidebarOpen((prev) => !prev)}
+                  >
+                    {isFolderSidebarOpen ? (
+                        <PanelLeftClose size={14} />
+                    ) : (
+                        <PanelLeftOpen size={14} />
+                    )}
+                    {isFolderSidebarOpen ? '폴더 닫기' : '폴더 선택'}
+                  </button>
+                  <button
+                      type="button"
+                      className="mini-icon-btn"
+                      onClick={() => setShowNasConfig((prev) => !prev)}
+                      title="NAS n8n 웹훅 설정"
+                  >
+                    <Server size={15} />
+                  </button>
+                  {nasWebhookUrl && (
+                      <button
+                          type="button"
+                          className="mini-icon-btn"
+                          onClick={() => handleSyncFromNas(false, undefined, false)}
+                          title="NAS에서 텔레그램 단어 동기화"
+                      >
+                        <RefreshCw size={15} className={isSyncing ? 'spin' : ''} />
+                      </button>
+                  )}
+                  {deferredPrompt && (
+                      <button
+                          type="button"
+                          className="install-app-btn"
+                          onClick={handleInstallPwa}
+                      >
+                        <Smartphone size={14} />
+                        앱 설치
+                      </button>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div className="streak-pill" title="매일 연속 학습한 출석 일수">
+                    <Flame size={14} />
+                    {stats.streak}일째
+                  </div>
+                  <div className="due-pill" title="오늘 복습해야 할 남은 단어 수">
+                    남은 복습 {dueItems.length}
+                  </div>
+                </div>
+              </div>
+
+              {showNasConfig && (
+                  <div className="api-key-box">
+                    <div>
+                      <strong>NAS n8n Production Webhook 주소</strong>
+                    </div>
+                    <div className="api-key-row">
+                      <input
+                          type="url"
+                          className="mini-input"
+                          style={{ flex: 1 }}
+                          value={nasUrlInput}
+                          onChange={(e) => setNasUrlInput(e.target.value)}
+                      />
+                      <button type="button" className="submit-btn" onClick={handleSaveNasWebhook}>
+                        저장
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => handleSyncFromNas(false, nasUrlInput, true)}
+                      >
+                        🔄 NAS 단어 전체 다시 불러오기
+                      </button>
+                      <button
+                          type="button"
+                          className="secondary-btn"
+                          style={{ color: '#dc2626' }}
+                          onClick={handleClearNasRemote}
+                      >
+                        🗑️ NAS 대기열 비우기
+                      </button>
+                    </div>
+                  </div>
+              )}
+
+              {/* 폴더 선택 버튼을 눌렀을 때 카드 아래에 펼쳐지는 폴더 트리 */}
               {isFolderSidebarOpen && (
                   <aside className="folder-sidebar">
                     <div className="folder-sidebar-header">
@@ -1332,321 +1669,40 @@ export function App() {
                   </aside>
               )}
 
-              {/* 메인 학습 카드 영역 */}
-              <div className="study-main">
-                <div className="toolbar">
-                  <div className="mode-switch">
-                    <button
-                        type="button"
-                        className={`mode-btn ${studyMode === 'flashcard' ? 'active' : ''}`}
-                        onClick={() => {
-                          setStudyMode('flashcard');
-                          resetCardInteraction();
-                        }}
-                    >
-                      <Layers size={15} />
-                      플래시카드
-                    </button>
-                    <button
-                        type="button"
-                        className={`mode-btn ${studyMode === 'spelling' ? 'active' : ''}`}
-                        onClick={() => {
-                          setStudyMode('spelling');
-                          resetCardInteraction();
-                        }}
-                    >
-                      <Keyboard size={15} />
-                      스펠링 테스트
-                    </button>
-                  </div>
+              {/* 4순위 (제일 하단): 버튼 클릭 시에만 펼쳐지는 상세 학습 통계 */}
+              <div className="bottom-stats-wrap">
+                <button
+                    type="button"
+                    className="stats-toggle-btn"
+                    onClick={() => setShowBottomStats((prev) => !prev)}
+                >
+                  <BarChart2 size={14} />
+                  {showBottomStats ? '학습 통계 숨기기 ▲' : '상세 학습 통계 보기 ▼'}
+                </button>
 
-                  {/* 6번 요청: TTS 속도 0.5, 0.7, 0.8, 0.9, 1.0배속 선택 */}
-                  <div className="toolbar-actions">
-                    <div className="speed-group" title="발음 읽어주기 속도">
-                      {SPEECH_RATES.map((r) => (
-                          <button
-                              key={r}
-                              type="button"
-                              className={`speed-chip ${speechRate === r ? 'active' : ''}`}
-                              onClick={() => {
-                                setSpeechRate(r);
-                                if (currentItem) speakWord(currentItem.word, r);
-                              }}
-                          >
-                            {r}x
-                          </button>
-                      ))}
-                    </div>
-                    <button
-                        type="button"
-                        className={`auto-audio-btn ${autoSpeak ? 'on' : ''}`}
-                        onClick={() => setAutoSpeak((prev) => !prev)}
-                    >
-                      <Volume2 size={14} />
-                      {autoSpeak ? '자동' : '수동'}
-                    </button>
-                  </div>
-                </div>
-
-                {!currentItem ? (
-                    <div className="done-card">
-                      <div className="done-icon">
-                        <Sparkles size={26} />
+                {showBottomStats && (
+                    <div className="gg-stats-banner">
+                      <div className="gg-stats-line1">
+                        [오늘 공부량] 총{' '}
+                        <span className="gg-blue">{stats.todayReviewed}문제</span> 풀이 (쉬움{' '}
+                        <span className="gg-green">{stats.todayCorrect}</span> / 재복습{' '}
+                        <span className="gg-red">{stats.todayWrong}</span>)
                       </div>
-                      <h2 style={{ margin: '0 0 6px', fontSize: '1.15rem' }}>
-                        [{studyCategory === 'ALL' ? '전체 단어장' : studyCategory}] 오늘 복습 완료!
-                      </h2>
-                      <p style={{ color: '#64748b', fontSize: '0.86rem', marginBottom: 16 }}>
-                        오늘 총 <strong>{stats.todayReviewed}문제</strong> (쉬움 {stats.todayCorrect} /
-                        재학습 {stats.todayWrong}) 풀이를 마쳤습니다.
-                      </p>
-                      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        {studyCategory !== 'ALL' && (
-                            <button
-                                type="button"
-                                className="secondary-btn"
-                                onClick={() => setStudyCategory('ALL')}
-                            >
-                              전체 단어장 보기
-                            </button>
-                        )}
-                        <button
-                            type="button"
-                            className="secondary-btn"
-                            onClick={() => setIsFolderSidebarOpen(true)}
-                        >
-                          📂 다른 폴더 선택
-                        </button>
-                        <button
-                            type="button"
-                            className="secondary-btn"
-                            onClick={() => setActiveTab('add')}
-                        >
-                          + 단어 추가하기
-                        </button>
+                      <div className="gg-stats-line2">
+                        [이 문제 전적] 총 {currentCardMetrics.totalTries}전{' '}
+                        <span className="gg-green">{currentCardMetrics.wins}승</span>{' '}
+                        <span className="gg-red">{currentCardMetrics.losses}패</span> (통산{' '}
+                        {currentCardMetrics.winRate}%) &nbsp;|&nbsp; [최근{' '}
+                        {currentCardMetrics.recentCount}회]{' '}
+                        <span className="gg-green">{currentCardMetrics.recentStr}</span>
+                      </div>
+                      <div className="gg-stats-line3">
+                        평균 시간: {currentCardMetrics.avgSec}초 &nbsp;|&nbsp; 상태: ●{' '}
+                        {currentItem ? getStateLabel(currentItem.card.state) : '대기 중'}{' '}
+                        &nbsp;|&nbsp; 마지막 풀이: {currentCardMetrics.lastSolved}
                       </div>
                     </div>
-                ) : studyMode === 'flashcard' ? (
-                    <>
-                      <div
-                          className="study-card clickable"
-                          onClick={() => setIsFlipped((prev) => !prev)}
-                      >
-                        <div className="card-top-row">
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      <span className="badge-state">
-                        {getStateLabel(currentItem.card.state)}
-                      </span>
-                            <span className="cat-badge">
-                        <FolderOpen size={11} />
-                              {normalizeCategory(currentItem.tag)}
-                      </span>
-                          </div>
-                          <button
-                              type="button"
-                              className="icon-circle-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                speakWord(currentItem.word);
-                              }}
-                          >
-                            <Volume2 size={19} />
-                          </button>
-                        </div>
-
-                        <div className="card-center">
-                          <h2 className="word-display">{currentItem.word}</h2>
-                          {currentItem.phonetic && (
-                              <div className="phonetic-display">{currentItem.phonetic}</div>
-                          )}
-
-                          {isFlipped && (
-                              <>
-                                <div className="meaning-display">{currentItem.meaning}</div>
-                                {currentItem.example && (
-                                    <div className="example-box">{currentItem.example}</div>
-                                )}
-                              </>
-                          )}
-                        </div>
-
-                        <div className="flip-hint">
-                          <RotateCcw size={13} />
-                          {!isFlipped
-                              ? '카드를 터치해 품사별 뜻 · 반의어 · 예문/해석 보기'
-                              : '다시/어려움은 오늘 마지막에 다시 나오고, 보통/쉬움은 다음 복습일로 넘어갑니다'}
-                        </div>
-                      </div>
-
-                      {isFlipped && (
-                          <div className="rating-section">
-                            <div className="rating-grid">
-                              {ratingOptions.map((opt) => (
-                                  <button
-                                      key={opt.grade}
-                                      type="button"
-                                      className={`rate-btn ${opt.className}`}
-                                      onClick={() => handleRate(opt.grade)}
-                                  >
-                                    <span className="rate-label">{opt.label}</span>
-                                    <span className="rate-interval">{opt.intervalText}</span>
-                                  </button>
-                              ))}
-                            </div>
-                          </div>
-                      )}
-                    </>
-                ) : (
-                    <>
-                      <div className="study-card">
-                        <div className="card-top-row">
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      <span className="cat-badge">
-                        <FolderOpen size={11} />
-                        {normalizeCategory(currentItem.tag)}
-                      </span>
-                          </div>
-                          <button
-                              type="button"
-                              className="icon-circle-btn"
-                              onClick={() => speakWord(currentItem.word)}
-                          >
-                            <Volume2 size={19} />
-                          </button>
-                        </div>
-
-                        <div className="card-center">
-                          <div className="spelling-prompt-label">다음 뜻에 맞는 영어 스펠링을 입력하세요</div>
-                          <div className="meaning-display">{currentItem.meaning}</div>
-
-                          {!spellingResult && (
-                              <div className="spelling-helpers">
-                                <button
-                                    type="button"
-                                    className="helper-chip"
-                                    onClick={() => speakWord(currentItem.word)}
-                                >
-                                  <Volume2 size={14} />
-                                  발음 듣기
-                                </button>
-                                <button
-                                    type="button"
-                                    className="helper-chip"
-                                    onClick={() => setShowHint((prev) => !prev)}
-                                >
-                                  <HelpCircle size={14} />
-                                  첫 글자 힌트
-                                </button>
-                              </div>
-                          )}
-
-                          {showHint && !spellingResult && (
-                              <div className="hint-text">
-                                {currentItem.word[0]}{' '}
-                                {'_ '.repeat(Math.max(0, currentItem.word.length - 1))} (
-                                {currentItem.word.length}글자)
-                              </div>
-                          )}
-
-                          {!spellingResult ? (
-                              <form className="spelling-form" onSubmit={handleCheckSpelling}>
-                                <input
-                                    ref={spellingInputRef}
-                                    type="text"
-                                    className="spelling-input"
-                                    placeholder="영어 단어 입력..."
-                                    value={typedAnswer}
-                                    onChange={(e) => setTypedAnswer(e.target.value)}
-                                    autoCapitalize="none"
-                                    autoCorrect="off"
-                                    spellCheck={false}
-                                />
-                                <button type="submit" className="submit-btn">
-                                  확인
-                                </button>
-                              </form>
-                          ) : (
-                              <div className={`spelling-feedback ${spellingResult}`}>
-                                <div className="feedback-badge">
-                                  {spellingResult === 'correct' ? (
-                                      <>
-                                        <Check size={18} />
-                                        정답입니다!
-                                      </>
-                                  ) : (
-                                      <>
-                                        <X size={18} />
-                                        스펠링을 다시 확인해 보세요
-                                      </>
-                                  )}
-                                </div>
-                                <div className="answer-compare">
-                                  정답: <strong>{currentItem.word}</strong>{' '}
-                                  {currentItem.phonetic && <span>{currentItem.phonetic}</span>}
-                                </div>
-                                {currentItem.example && (
-                                    <div className="example-box">{currentItem.example}</div>
-                                )}
-                              </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {spellingResult && (
-                          <div className="rating-section">
-                            <div className="rating-grid">
-                              {ratingOptions.map((opt) => (
-                                  <button
-                                      key={opt.grade}
-                                      type="button"
-                                      className={`rate-btn ${opt.className}`}
-                                      onClick={() => handleRate(opt.grade)}
-                                  >
-                                    <span className="rate-label">{opt.label}</span>
-                                    <span className="rate-interval">{opt.intervalText}</span>
-                                  </button>
-                              ))}
-                            </div>
-                          </div>
-                      )}
-                    </>
                 )}
-
-                {/* 4번 요청: 통계글은 제일 하단에 배치하고 버튼을 누를 때만 표시 */}
-                <div className="bottom-stats-wrap">
-                  <button
-                      type="button"
-                      className="stats-toggle-btn"
-                      onClick={() => setShowBottomStats((prev) => !prev)}
-                  >
-                    <BarChart2 size={14} />
-                    {showBottomStats ? '학습 통계 숨기기 ▲' : '상세 학습 통계 보기 ▼'}
-                  </button>
-
-                  {showBottomStats && (
-                      <div className="gg-stats-banner">
-                        <div className="gg-stats-line1">
-                          [오늘 공부량] 총{' '}
-                          <span className="gg-blue">{stats.todayReviewed}문제</span> 풀이 (쉬움{' '}
-                          <span className="gg-green">{stats.todayCorrect}</span> / 재복습{' '}
-                          <span className="gg-red">{stats.todayWrong}</span>)
-                        </div>
-                        <div className="gg-stats-line2">
-                          [이 문제 전적] 총 {currentCardMetrics.totalTries}전{' '}
-                          <span className="gg-green">{currentCardMetrics.wins}승</span>{' '}
-                          <span className="gg-red">{currentCardMetrics.losses}패</span> (통산{' '}
-                          {currentCardMetrics.winRate}%) &nbsp;|&nbsp; [최근{' '}
-                          {currentCardMetrics.recentCount}회]{' '}
-                          <span className="gg-green">{currentCardMetrics.recentStr}</span>
-                        </div>
-                        <div className="gg-stats-line3">
-                          평균 시간: {currentCardMetrics.avgSec}초 &nbsp;|&nbsp; 상태: ●{' '}
-                          {currentItem ? getStateLabel(currentItem.card.state) : '대기 중'}{' '}
-                          &nbsp;|&nbsp; 마지막 풀이: {currentCardMetrics.lastSolved}
-                        </div>
-                      </div>
-                  )}
-                </div>
               </div>
             </div>
         )}
@@ -1656,7 +1712,7 @@ export function App() {
               <div className="category-select-box">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span className="field-label">
-                📁 책 제목 또는 상위/하위 폴더 (책 제목만 적어도 사진 속 Unit별로 자동 분리됩니다)
+                📁 책 제목 또는 상위/하위 폴더 (책 제목만 적어도 큰 제목 페이지 기준으로 자동 묶입니다)
               </span>
                   <button
                       type="button"
@@ -1669,7 +1725,7 @@ export function App() {
                 <input
                     type="text"
                     className="text-input"
-                    placeholder="예: 보카엔진 또는 Vocabulary Engine/Unit 10"
+                    placeholder="예: Vocabulary Engine"
                     value={targetCategory}
                     onChange={(e) => setTargetCategory(e.target.value)}
                     list="folder-suggestions"
@@ -1687,7 +1743,7 @@ export function App() {
                     className={`sub-tab-btn ${addSubTab === 'camera' ? 'active' : ''}`}
                     onClick={() => setAddSubTab('camera')}
                 >
-                  사진 스캔 (유닛 자동분리)
+                  사진 스캔 (큰제목 자동묶음)
                 </button>
                 <button
                     type="button"
@@ -1755,16 +1811,16 @@ export function App() {
                         onClick={() => cameraInputRef.current?.click()}
                     >
                       <Camera size={26} />
-                      <span>단어장 사진 찍기 또는 여러 유닛 한꺼번에 선택</span>
+                      <span>단어장 사진 순서대로 선택 (큰 제목 페이지 기준 자동 묶음)</span>
                       <span style={{ fontSize: '0.75rem', fontWeight: 500, opacity: 0.85 }}>
-                  Unit 10, Unit 11 사진을 한 번에 올려도 각 유닛 하위 폴더로 자동 분리됩니다
+                  Unit 큰 제목이 있는 페이지부터 다음 큰 제목이 나오기 전까지 같은 유닛으로 묶입니다
                 </span>
                     </button>
 
                     {isExtracting && (
                         <div className="ocr-loading">
                           <Loader2 size={18} className="spin" />
-                          AI가 페이지별 유닛(Unit)과 발음기호·뜻·예문/번역을 추출하고 있습니다...
+                          AI가 페이지 순서대로 큰 제목(Unit)을 판별해 단어를 묶고 있습니다...
                         </div>
                     )}
 
@@ -1842,7 +1898,7 @@ export function App() {
                               className="primary-full-btn"
                               onClick={handleSaveExtractedDrafts}
                           >
-                            유닛별 하위 폴더로 자동 분리하여 저장
+                            유닛별 하위 폴더로 분리하여 저장
                           </button>
                         </>
                     )}
@@ -2062,7 +2118,7 @@ export function App() {
                               <button
                                   type="button"
                                   className="mini-icon-btn"
-                                  onClick={() => speakWord(item.word)}
+                                  onClick={() => speakWord(item.word, speechRate)}
                               >
                                 <Volume2 size={15} />
                               </button>
