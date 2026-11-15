@@ -66,7 +66,6 @@ import {
   normalizeCategory,
   loadCustomCategories,
   saveCustomCategories,
-// [변경 후]
   extractEnglishOnly,
   expandMeaningAbbreviations,
   getSpellingPromptMeaning,
@@ -1527,8 +1526,7 @@ export function App() {
                           <Volume2 size={19} />
                         </button>
                       </div>
-
-                      // [변경 후]
+                      
                       <div className="card-center">
                         <div className="spelling-prompt-label">다음 뜻에 맞는 영어 스펠링을 입력하세요</div>
                         <div className="meaning-display">
