@@ -1,9 +1,6 @@
 import type { Card } from 'ts-fsrs';
 
-
-
 export interface VocabItemStats {
-
     wins: number;
     losses: number;
     recentHistory: Array<'O' | 'X'>;
@@ -17,7 +14,7 @@ export interface VocabItem {
     phonetic?: string;
     meaning: string;
     example?: string;
-    tag?: string; // 예: "Vocabulary Engine/Unit 09"
+    tag?: string;
     itemStats?: VocabItemStats;
     card: Card;
     createdAt: number;
@@ -42,7 +39,12 @@ export interface StudyStats {
     todayWrong: number;
 }
 
-
+export interface CloudSyncState {
+    updatedAt: number;
+    items: VocabItem[];
+    categories: string[];
+    stats: StudyStats | null;
+}
 
 export type StudyMode = 'flashcard' | 'spelling';
 export type AppTab = 'study' | 'add' | 'list';

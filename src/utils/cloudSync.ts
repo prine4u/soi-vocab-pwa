@@ -1,6 +1,6 @@
 import { createEmptyCard } from 'ts-fsrs';
-import type { VocabItem } from '../types';
-import { normalizeCategory } from './storage';
+import type { VocabItem, StudyStats, CloudSyncState } from '../types';
+import { normalizeCategory, hydrateVocabItems } from './storage';
 
 const NAS_WEBHOOK_STORAGE_KEY = 'soi_vocab_nas_webhook_url_v1';
 const SYNCED_IDS_KEY = 'soi_vocab_synced_n8n_ids_v1';
@@ -34,6 +34,12 @@ export function saveNasWebhookUrl(url: string): void {
     }
 }
 
+function getDbWebhookUrl(inboxWebhookUrl?: string): string {
+    const base = (inboxWebhookUrl ?? loadNasWebhookUrl()).trim();
+    if (!base) return '';
+    return base.replace(/\/soi-vocab-inbox(\?.*)?$/, '/soi-vocab-db');
+}
+
 export function resetNasSyncHistory(): void {
     localStorage.removeItem(SYNCED_IDS_KEY);
 }
@@ -47,6 +53,32 @@ export async function clearNasRemoteDb(customWebhookUrl?: string): Promise<void>
         headers: { Accept: 'application/json' },
     });
     resetNasSyncHistory();
+}
+
+/**
+ * 현재 기기(PC/아이폰/안드로이드)의 단어장·폴더순서·학습진도를 NAS 서버에 업로드
+ */
+export async function pushStateToNas(
+    state: CloudSyncState,
+    customWebhookUrl?: string
+): Promise<void> {
+    const dbUrl = getDbWebhookUrl(customWebhookUrl);
+    if (!dbUrl) return;
+
+    // text/plain 으로 전송하여 브라우저 CORS Preflight(OPTIONS) 차단 없이 즉시 전송
+    await fetch(dbUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'text/plain;charset=UTF-8',
+        },
+        body: JSON.stringify({
+            action: 'sync_push',
+            updatedAt: state.updatedAt,
+            items: state.items,
+            categories: state.categories,
+            stats: state.stats,
+        }),
+    });
 }
 
 function loadSyncedIds(): Set<string> {
@@ -68,10 +100,14 @@ export async function fetchNewNasVocab(
     existingItems: VocabItem[],
     customWebhookUrl?: string,
     forceResync: boolean = false
-): Promise<{ newItems: VocabItem[]; newCategories: string[] }> {
+): Promise<{
+    newItems: VocabItem[];
+    newCategories: string[];
+    remoteCloudState: CloudSyncState | null;
+}> {
     const webhookUrl = (customWebhookUrl ?? loadNasWebhookUrl()).trim();
     if (!webhookUrl) {
-        return { newItems: [], newCategories: [] };
+        return { newItems: [], newCategories: [], remoteCloudState: null };
     }
 
     if (forceResync) {
@@ -81,6 +117,7 @@ export async function fetchNewNasVocab(
     const response = await fetch(webhookUrl, {
         method: 'GET',
         headers: { Accept: 'application/json' },
+        cache: 'no-store',
     });
 
     if (!response.ok) {
@@ -94,9 +131,44 @@ export async function fetchNewNasVocab(
             ? ((data as { items: NasVocabRow[] }).items)
             : [];
 
+    let remoteCloudState: CloudSyncState | null = null;
+    if (
+        data &&
+        typeof data === 'object' &&
+        (data as { cloudState?: unknown }).cloudState &&
+        typeof (data as { cloudState?: unknown }).cloudState === 'object'
+    ) {
+        const rawCloud = (data as {
+            cloudState: {
+                updatedAt?: number;
+                items?: unknown[];
+                categories?: unknown[];
+                stats?: StudyStats | null;
+            };
+        }).cloudState;
+
+        if (Array.isArray(rawCloud.items) && (rawCloud.updatedAt || 0) > 0) {
+            remoteCloudState = {
+                updatedAt: Number(rawCloud.updatedAt) || 0,
+                items: hydrateVocabItems(rawCloud.items),
+                categories: Array.isArray(rawCloud.categories)
+                    ? rawCloud.categories
+                        .filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+                        .map((c) => normalizeCategory(c))
+                    : [],
+                stats: rawCloud.stats || null,
+            };
+        }
+    }
+
     const syncedIds = loadSyncedIds();
+    const basePool =
+        remoteCloudState && remoteCloudState.items.length > existingItems.length
+            ? remoteCloudState.items
+            : existingItems;
+
     const existingKeys = new Set(
-        existingItems.map(
+        basePool.map(
             (item) => `${normalizeCategory(item.tag).toLowerCase()}::${item.word.toLowerCase()}`
         )
     );
@@ -134,5 +206,6 @@ export async function fetchNewNasVocab(
     return {
         newItems,
         newCategories: Array.from(newCategorySet),
+        remoteCloudState,
     };
 }

@@ -41,6 +41,8 @@ import {
   ChevronDown,
   BarChart2,
   Smartphone,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import type {
   VocabItem,
@@ -64,6 +66,9 @@ import {
   normalizeCategory,
   loadCustomCategories,
   saveCustomCategories,
+  extractEnglishOnly,
+  loadLocalUpdatedAt,
+  saveLocalUpdatedAt,
 } from './utils/storage';
 import {
   loadGeminiApiKey,
@@ -76,6 +81,7 @@ import {
   saveNasWebhookUrl,
   fetchNewNasVocab,
   clearNasRemoteDb,
+  pushStateToNas,
 } from './utils/cloudSync';
 
 interface FolderTreeNode {
@@ -165,6 +171,7 @@ export function App() {
   });
   const speechRateRef = useRef<number>(speechRate);
   const speechTimeoutRef = useRef<number | null>(null);
+  const cloudPushTimerRef = useRef<number | null>(null);
 
   const [isFolderSidebarOpen, setIsFolderSidebarOpen] = useState<boolean>(false);
   const [showBottomStats, setShowBottomStats] = useState<boolean>(false);
@@ -239,7 +246,6 @@ export function App() {
     localStorage.setItem(SPEECH_RATE_STORAGE_KEY, String(speechRate));
   }, [speechRate]);
 
-  // 브라우저 TTS 음성 목록 미리 로드 (모바일 배속 정상 작동용)
   useEffect(() => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.getVoices();
@@ -270,10 +276,42 @@ export function App() {
     setTimeout(() => setToastMsg(''), 3200);
   };
 
+  // 멀티 기기(PC/아이폰/안드로이드) 클라우드 자동 업로드 예약
+  const scheduleCloudPush = (
+      nextItems: VocabItem[],
+      nextCategories: string[],
+      nextStats: StudyStats
+  ) => {
+    const updatedAt = saveLocalUpdatedAt(Date.now());
+    if (!nasWebhookUrl.trim()) return;
+    if (cloudPushTimerRef.current !== null) {
+      window.clearTimeout(cloudPushTimerRef.current);
+    }
+    cloudPushTimerRef.current = window.setTimeout(() => {
+      pushStateToNas(
+          {
+            updatedAt,
+            items: nextItems,
+            categories: nextCategories,
+            stats: nextStats,
+          },
+          nasWebhookUrl
+      ).catch(() => {});
+    }, 500);
+  };
+
+  // 사용자가 지정한 폴더 순서를 유지하도록 정렬 강제 제거
   const allCategories = useMemo(() => {
-    const set = new Set<string>(customCategories);
-    items.forEach((item) => set.add(normalizeCategory(item.tag)));
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'));
+    const ordered: string[] = [];
+    customCategories.forEach((c) => {
+      const norm = normalizeCategory(c);
+      if (!ordered.includes(norm)) ordered.push(norm);
+    });
+    items.forEach((item) => {
+      const norm = normalizeCategory(item.tag);
+      if (!ordered.includes(norm)) ordered.push(norm);
+    });
+    return ordered;
   }, [customCategories, items]);
 
   const folderTree = useMemo<FolderTreeNode[]>(() => {
@@ -311,18 +349,16 @@ export function App() {
   }, [items, studyCategory]);
 
   const selectionMetrics = useMemo(() => {
-    let wins = 0;
-    let losses = 0;
+    let totalTries = 0;
     let totalTimeMs = 0;
     selectedPoolItems.forEach((item) => {
-      wins += item.itemStats?.wins || 0;
-      losses += item.itemStats?.losses || 0;
+      const w = item.itemStats?.wins || 0;
+      const l = item.itemStats?.losses || 0;
+      totalTries += w + l;
       totalTimeMs += item.itemStats?.totalTimeMs || 0;
     });
-    const attempts = wins + losses;
-    const rightPct = attempts > 0 ? ((wins / attempts) * 100).toFixed(1) : '0.0';
-    const avgSec = attempts > 0 ? (totalTimeMs / attempts / 1000).toFixed(2) : '0.00';
-    return { wins, attempts, rightPct, avgSec };
+    const avgSec = totalTries > 0 ? (totalTimeMs / totalTries / 1000).toFixed(2) : '0.00';
+    return { totalTries, avgSec };
   }, [selectedPoolItems]);
 
   const dueItems = useMemo(() => {
@@ -345,7 +381,6 @@ export function App() {
     cardStartTimeRef.current = Date.now();
   }, [currentItem?.id, studyCategory]);
 
-  // 5번 해결: 모바일/PC 브라우저에서 배속(rate)이 무시되지 않도록 60ms 딜레이 + 원어민 음성 바인딩
   const speakWord = (text: string, customRate?: number) => {
     if (!('speechSynthesis' in window) || !text.trim()) return;
 
@@ -375,15 +410,25 @@ export function App() {
     }, 60);
   };
 
+  // 영어 예문만 추출하여 읽어주는 헬퍼 함수 (예문이 없으면 단어를 읽음)
+  const speakExampleOrWord = (item: VocabItem, customRate?: number) => {
+    const engExample = extractEnglishOnly(item.example);
+    if (engExample) {
+      speakWord(engExample, customRate);
+    } else {
+      speakWord(item.word, customRate);
+    }
+  };
+
+  // 5번 요청: 카드 앞면에서는 단어를 읽고, 정답(뒷면)을 펼치면 영어 예문만 읽어줌
   useEffect(() => {
-    if (
-        activeTab === 'study' &&
-        studyMode === 'flashcard' &&
-        autoSpeak &&
-        currentItem &&
-        !isFlipped
-    ) {
+    if (activeTab !== 'study' || studyMode !== 'flashcard' || !autoSpeak || !currentItem) {
+      return;
+    }
+    if (!isFlipped) {
       speakWord(currentItem.word, speechRateRef.current);
+    } else {
+      speakExampleOrWord(currentItem, speechRateRef.current);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, studyMode, autoSpeak, currentItem?.id, isFlipped]);
@@ -402,16 +447,84 @@ export function App() {
     cardStartTimeRef.current = Date.now();
   };
 
+  // 6번 요청: 상위 폴더 위치(순서) 위/아래 이동
+  const handleMoveParentFolder = (parentName: string, direction: 'up' | 'down') => {
+    const idx = folderTree.findIndex((g) => g.parent === parentName);
+    if (idx < 0) return;
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= folderTree.length) return;
+
+    const nextTree = [...folderTree];
+    const temp = nextTree[idx];
+    nextTree[idx] = nextTree[swapIdx];
+    nextTree[swapIdx] = temp;
+
+    const nextCategories: string[] = [];
+    nextTree.forEach((group) => {
+      if (group.children.length === 0) {
+        nextCategories.push(group.parent);
+      } else {
+        if (allCategories.includes(group.parent)) {
+          nextCategories.push(group.parent);
+        }
+        group.children.forEach((ch) => nextCategories.push(ch.fullPath));
+      }
+    });
+
+    setCustomCategories(nextCategories);
+    scheduleCloudPush(items, nextCategories, stats);
+  };
+
+  // 6번 요청: 하위 유닛 폴더 위치(순서) 위/아래 이동
+  const handleMoveChildFolder = (
+      parentName: string,
+      fullPath: string,
+      direction: 'up' | 'down'
+  ) => {
+    const groupIdx = folderTree.findIndex((g) => g.parent === parentName);
+    if (groupIdx < 0) return;
+    const children = [...folderTree[groupIdx].children];
+    const cIdx = children.findIndex((c) => c.fullPath === fullPath);
+    if (cIdx < 0) return;
+    const swapIdx = direction === 'up' ? cIdx - 1 : cIdx + 1;
+    if (swapIdx < 0 || swapIdx >= children.length) return;
+
+    const temp = children[cIdx];
+    children[cIdx] = children[swapIdx];
+    children[swapIdx] = temp;
+
+    const nextTree = folderTree.map((g, i) =>
+        i === groupIdx ? { ...g, children } : g
+    );
+
+    const nextCategories: string[] = [];
+    nextTree.forEach((group) => {
+      if (group.children.length === 0) {
+        nextCategories.push(group.parent);
+      } else {
+        if (allCategories.includes(group.parent)) {
+          nextCategories.push(group.parent);
+        }
+        group.children.forEach((ch) => nextCategories.push(ch.fullPath));
+      }
+    });
+
+    setCustomCategories(nextCategories);
+    scheduleCloudPush(items, nextCategories, stats);
+  };
+
   const handleAddFolderHierarchy = () => {
     const p = formatFolderSegment(newParentFolder.replace(/\//g, ' '));
     const c = formatFolderSegment(newChildFolder.replace(/\//g, ' '));
     if (!p && !c) return;
     const fullPath = p && c ? `${p}/${c}` : p || c;
-    setCustomCategories((prev) => Array.from(new Set([...prev, fullPath])));
+    const nextCats = Array.from(new Set([...allCategories, fullPath]));
+    setCustomCategories(nextCats);
     setTargetCategory(fullPath);
     setStudyCategory(fullPath);
     setNewParentFolder('');
     setNewChildFolder('');
+    scheduleCloudPush(items, nextCats, stats);
     showToast(`📁 [${fullPath}] 폴더가 생성되었습니다.`);
   };
 
@@ -422,44 +535,48 @@ export function App() {
     );
     if (!sub || !sub.trim()) return;
     const fullPath = normalizeCategory(`${parentName}/${sub.trim()}`);
-    setCustomCategories((prev) => Array.from(new Set([...prev, fullPath])));
+    const nextCats = Array.from(new Set([...allCategories, fullPath]));
+    setCustomCategories(nextCats);
     setStudyCategory(fullPath);
     setTargetCategory(fullPath);
+    scheduleCloudPush(items, nextCats, stats);
     showToast(`📁 [${fullPath}] 하위 폴더가 추가되었습니다.`);
   };
 
   const handleRenameFolder = (oldPath: string) => {
     const nextName = window.prompt(
-        `폴더 이름을 변경합니다 ("상위폴더/하위폴더" 형식 입력 가능):`,
+        `폴더 이름 또는 경로를 변경합니다 ("상위폴더/하위폴더" 형식으로 다른 폴더 밑으로 이동 가능):`,
         oldPath
     );
     if (!nextName || !nextName.trim() || nextName.trim() === oldPath) return;
     const cleaned = normalizeCategory(nextName);
 
-    setItems((prev) =>
-        prev.map((item) => {
-          const norm = normalizeCategory(item.tag);
-          if (norm === oldPath) return { ...item, tag: cleaned };
-          if (norm.startsWith(`${oldPath}/`)) {
-            return {
-              ...item,
-              tag: normalizeCategory(`${cleaned}/${norm.slice(oldPath.length + 1)}`),
-            };
-          }
-          return item;
-        })
-    );
-    setCustomCategories((prev) =>
-        prev.map((cat) => {
-          if (cat === oldPath) return cleaned;
-          if (cat.startsWith(`${oldPath}/`)) {
-            return normalizeCategory(`${cleaned}/${cat.slice(oldPath.length + 1)}`);
-          }
-          return cat;
-        })
-    );
+    const nextItems = items.map((item) => {
+      const norm = normalizeCategory(item.tag);
+      if (norm === oldPath) return { ...item, tag: cleaned };
+      if (norm.startsWith(`${oldPath}/`)) {
+        return {
+          ...item,
+          tag: normalizeCategory(`${cleaned}/${norm.slice(oldPath.length + 1)}`),
+        };
+      }
+      return item;
+    });
+
+    const nextCats = allCategories.map((cat) => {
+      if (cat === oldPath) return cleaned;
+      if (cat.startsWith(`${oldPath}/`)) {
+        return normalizeCategory(`${cleaned}/${cat.slice(oldPath.length + 1)}`);
+      }
+      return cat;
+    });
+
+    setItems(nextItems);
+    setCustomCategories(nextCats);
     if (studyCategory === oldPath) setStudyCategory(cleaned);
+    if (listCategory === oldPath) setListCategory(cleaned);
     if (targetCategory === oldPath) setTargetCategory(cleaned);
+    scheduleCloudPush(nextItems, nextCats, stats);
     showToast(`✏️ [${oldPath}] → [${cleaned}] 변경 완료`);
   };
 
@@ -471,12 +588,15 @@ export function App() {
             : `[${folderPath}] 빈 폴더를 삭제하시겠습니까?`;
     if (!window.confirm(msg)) return;
 
-    setItems((prev) => prev.filter((item) => !isCategoryMatch(item.tag, folderPath)));
-    setCustomCategories((prev) =>
-        prev.filter((c) => c !== folderPath && !c.startsWith(`${folderPath}/`))
+    const nextItems = items.filter((item) => !isCategoryMatch(item.tag, folderPath));
+    const nextCats = allCategories.filter(
+        (c) => c !== folderPath && !c.startsWith(`${folderPath}/`)
     );
+    setItems(nextItems);
+    setCustomCategories(nextCats);
     if (isCategoryMatch(studyCategory, folderPath)) setStudyCategory('ALL');
     if (isCategoryMatch(listCategory, folderPath)) setListCategory('ALL');
+    scheduleCloudPush(nextItems, nextCats, stats);
     showToast(`🗑️ [${folderPath}] 폴더가 삭제되었습니다.`);
   };
 
@@ -486,24 +606,25 @@ export function App() {
       return;
     }
     const nowDate = new Date();
-    setItems((prev) =>
-        prev.map((item) => {
-          if (!isCategoryMatch(item.tag, studyCategory)) return item;
-          return {
-            ...item,
-            itemStats: createEmptyItemStats(),
-            card: createNewVocabItem(item.word, item.meaning, item.example, nowDate, item.tag)
-                .card,
-          };
-        })
-    );
-    setStats((prev) => ({
-      ...prev,
+    const nextItems = items.map((item) => {
+      if (!isCategoryMatch(item.tag, studyCategory)) return item;
+      return {
+        ...item,
+        itemStats: createEmptyItemStats(),
+        card: createNewVocabItem(item.word, item.meaning, item.example, nowDate, item.tag)
+            .card,
+      };
+    });
+    const nextStats: StudyStats = {
+      ...stats,
       todayReviewed: 0,
       todayCorrect: 0,
       todayWrong: 0,
-    }));
-    showToast(`🔄 [${label}] 통계 및 복습 일정이 초기화되었습니다.`);
+    };
+    setItems(nextItems);
+    setStats(nextStats);
+    scheduleCloudPush(nextItems, allCategories, nextStats);
+    showToast(`🔄 [${label}] 복습 일정이 초기화되었습니다.`);
   };
 
   const handleRate = (grade: Grade) => {
@@ -527,46 +648,48 @@ export function App() {
       }
     }
 
-    const isWin =
+    const isEasy =
         grade === Rating.Easy &&
         (studyMode !== 'spelling' || spellingResult === 'correct');
 
-    setItems((prev) =>
-        prev.map((item) => {
-          if (item.id !== currentItem.id) return item;
-          const prevStats = item.itemStats ?? createEmptyItemStats();
-          const nextHistory: Array<'O' | 'X'> = [
-            ...prevStats.recentHistory,
-            isWin ? ('O' as const) : ('X' as const),
-          ].slice(-10);
+    const nextItems = items.map((item) => {
+      if (item.id !== currentItem.id) return item;
+      const prevStats = item.itemStats ?? createEmptyItemStats();
+      return {
+        ...item,
+        card: nextCard,
+        itemStats: {
+          wins: prevStats.wins + (isEasy ? 1 : 0),
+          losses: prevStats.losses + (isEasy ? 0 : 1),
+          recentHistory: prevStats.recentHistory,
+          totalTimeMs: prevStats.totalTimeMs + elapsedMs,
+          lastSolvedAt: nowDate.getTime(),
+        },
+      };
+    });
 
-          return {
-            ...item,
-            card: nextCard,
-            itemStats: {
-              wins: prevStats.wins + (isWin ? 1 : 0),
-              losses: prevStats.losses + (isWin ? 0 : 1),
-              recentHistory: nextHistory,
-              totalTimeMs: prevStats.totalTimeMs + elapsedMs,
-              lastSolvedAt: nowDate.getTime(),
-            },
-          };
-        })
-    );
-
-    setStats((prev) => recordAnswerStats(prev, isWin));
+    const nextStats = recordAnswerStats(stats, isEasy);
+    setItems(nextItems);
+    setStats(nextStats);
+    scheduleCloudPush(nextItems, allCategories, nextStats);
     resetCardInteraction();
   };
 
-  const handleCheckSpelling = (e: FormEvent) => {
-    e.preventDefault();
+  // 4번 & 5번 요청: 스펠링 테스트 확인/엔터 시 채점 후 영어 예문만 읽어주기
+  const submitSpellingAnswer = () => {
     if (!currentItem || !typedAnswer.trim()) return;
     const normalizedInput = typedAnswer.trim().replace(/\s+/g, ' ').toLowerCase();
     const normalizedTarget = currentItem.word.trim().replace(/\s+/g, ' ').toLowerCase();
     setSpellingResult(normalizedInput === normalizedTarget ? 'correct' : 'wrong');
-    speakWord(currentItem.word);
+    speakExampleOrWord(currentItem, speechRateRef.current);
   };
 
+  const handleCheckSpelling = (e: FormEvent) => {
+    e.preventDefault();
+    submitSpellingAnswer();
+  };
+
+  // 7번 요청: PC / 아이폰 / 안드로이드 양방향 NAS 동기화
   const handleSyncFromNas = async (
       silent: boolean = false,
       overrideUrl?: string,
@@ -577,24 +700,79 @@ export function App() {
 
     setIsSyncing(true);
     try {
-      const { newItems, newCategories } = await fetchNewNasVocab(
+      const { newItems, newCategories, remoteCloudState } = await fetchNewNasVocab(
           items,
           targetUrl,
           forceResync
       );
+
+      const localUpdated = loadLocalUpdatedAt();
+      let baseItems = items;
+      let baseCategories = allCategories;
+      let baseStats = stats;
+      let pulledFromRemote = false;
+
+      // 다른 기기(PC 등)에서 저장한 최신 클라우드 상태가 있거나, 현재 기기가 비어있는 경우 받아오기
+      if (
+          remoteCloudState &&
+          remoteCloudState.items.length > 0 &&
+          (remoteCloudState.updatedAt > localUpdated || items.length === 0 || forceResync)
+      ) {
+        baseItems = remoteCloudState.items;
+        baseCategories =
+            remoteCloudState.categories.length > 0
+                ? remoteCloudState.categories
+                : Array.from(new Set(remoteCloudState.items.map((it) => normalizeCategory(it.tag))));
+        if (remoteCloudState.stats) {
+          baseStats = remoteCloudState.stats;
+        }
+        saveLocalUpdatedAt(remoteCloudState.updatedAt);
+        pulledFromRemote = true;
+      }
+
       if (newItems.length > 0) {
         const formattedCats = newCategories.map((c) => normalizeCategory(c));
-        setItems((prev) => [...newItems, ...prev]);
-        setCustomCategories((prev) => Array.from(new Set([...prev, ...formattedCats])));
+        const mergedItems = [...newItems, ...baseItems];
+        const mergedCats = Array.from(new Set([...baseCategories, ...formattedCats]));
+        setItems(mergedItems);
+        setCustomCategories(mergedCats);
+        setStats(baseStats);
+        scheduleCloudPush(mergedItems, mergedCats, baseStats);
         showToast(
-            `📥 NAS에서 새 단어 ${newItems.length}개(${formattedCats.join(', ')})를 가져왔습니다!`
+            `📥 새 단어 ${newItems.length}개(${formattedCats.join(', ')}) 동기화 완료!`
         );
-      } else if (!silent) {
-        showToast('NAS 동기화 완료! 새로 추가된 단어가 없습니다.');
+      } else if (pulledFromRemote) {
+        setItems(baseItems);
+        setCustomCategories(baseCategories);
+        setStats(baseStats);
+        if (!silent) {
+          showToast(`☁️ 다른 기기의 최신 단어장(${baseItems.length}단어)과 동기화되었습니다!`);
+        }
+      } else {
+        // 현재 기기에 단어가 있는데 NAS 클라우드가 비어있거나 구버전이면 현재 기기 상태를 NAS로 업로드
+        if (
+            items.length > 0 &&
+            (!remoteCloudState ||
+                remoteCloudState.items.length === 0 ||
+                localUpdated > (remoteCloudState.updatedAt || 0))
+        ) {
+          await pushStateToNas(
+              {
+                updatedAt: localUpdated || saveLocalUpdatedAt(Date.now()),
+                items,
+                categories: allCategories,
+                stats,
+              },
+              targetUrl
+          );
+        }
+        if (!silent) {
+          showToast('☁️ 모든 기기 동기화 완료! 최신 상태입니다.');
+        }
       }
     } catch {
       if (!silent) {
-        showToast('NAS 연결에 실패했습니다. 웹훅 주소를 확인해 주세요.');
+        showToast('NAS 연결에 실패했습니다. 웹훅 주소와 n8n Publish 상태를 확인해 주세요.');
       }
     } finally {
       setIsSyncing(false);
@@ -626,6 +804,13 @@ export function App() {
     if (nasWebhookUrl) {
       handleSyncFromNas(true, nasWebhookUrl, false);
     }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && nasWebhookUrl) {
+        handleSyncFromNas(true, nasWebhookUrl, false);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -712,9 +897,12 @@ export function App() {
     });
 
     const folderList = Array.from(createdFolders);
-    setCustomCategories((prev) => Array.from(new Set([...prev, ...folderList])));
-    setItems((prev) => [...created, ...prev]);
+    const nextCats = Array.from(new Set([...allCategories, ...folderList]));
+    const nextItems = [...created, ...items];
+    setCustomCategories(nextCats);
+    setItems(nextItems);
     setExtractedDrafts([]);
+    scheduleCloudPush(nextItems, nextCats, stats);
     showToast(
         `📂 [${folderList.join(', ')}] 폴더에 총 ${created.length}개 단어가 분리 저장되었습니다.`
     );
@@ -732,12 +920,15 @@ export function App() {
         normFolder,
         newPhonetic
     );
-    setCustomCategories((prev) => Array.from(new Set([...prev, normFolder])));
-    setItems((prev) => [created, ...prev]);
+    const nextCats = Array.from(new Set([...allCategories, normFolder]));
+    const nextItems = [created, ...items];
+    setCustomCategories(nextCats);
+    setItems(nextItems);
     setNewWord('');
     setNewPhonetic('');
     setNewMeaning('');
     setNewExample('');
+    scheduleCloudPush(nextItems, nextCats, stats);
     showToast(`[${normFolder}]에 "${created.word}" 단어가 추가되었습니다.`);
   };
 
@@ -772,16 +963,29 @@ export function App() {
       showToast('인식된 단어가 없습니다. "단어 - 뜻" 형식을 확인해 주세요.');
       return;
     }
-    setCustomCategories((prev) => Array.from(new Set([...prev, normFolder])));
-    setItems((prev) => [...added, ...prev]);
+    const nextCats = Array.from(new Set([...allCategories, normFolder]));
+    const nextItems = [...added, ...items];
+    setCustomCategories(nextCats);
+    setItems(nextItems);
     setBulkText('');
+    scheduleCloudPush(nextItems, nextCats, stats);
     showToast(`[${normFolder}]에 ${added.length}개 단어가 등록되었습니다.`);
+  };
+
+  // 3번 요청: 단어 삭제 시 확인 알림창 표시
+  const handleDeleteItem = (item: VocabItem) => {
+    if (!window.confirm(`"${item.word}" 단어를 정말 삭제하시겠습니까?`)) return;
+    const nextItems = items.filter((it) => it.id !== item.id);
+    setItems(nextItems);
+    if (editingId === item.id) setEditingId(null);
+    scheduleCloudPush(nextItems, allCategories, stats);
+    showToast(`🗑️ "${item.word}" 단어가 삭제되었습니다.`);
   };
 
   const handleExportJson = () => {
     const payload = {
       app: '소이의 단어 암기장',
-      version: 6,
+      version: 7,
       exportedAt: new Date().toISOString(),
       categories: allCategories,
       items: selectedPoolItems.length > 0 ? selectedPoolItems : items,
@@ -805,16 +1009,20 @@ export function App() {
       const text = await file.text();
       const imported = parseImportedVocab(text);
       if (imported.length === 0) return;
-      setItems((prev) => {
-        const map = new Map<string, VocabItem>();
-        prev.forEach((item) =>
-            map.set(`${normalizeCategory(item.tag)}::${item.word.toLowerCase()}`, item)
-        );
-        imported.forEach((item) =>
-            map.set(`${normalizeCategory(item.tag)}::${item.word.toLowerCase()}`, item)
-        );
-        return Array.from(map.values());
-      });
+      const map = new Map<string, VocabItem>();
+      items.forEach((item) =>
+          map.set(`${normalizeCategory(item.tag)}::${item.word.toLowerCase()}`, item)
+      );
+      imported.forEach((item) =>
+          map.set(`${normalizeCategory(item.tag)}::${item.word.toLowerCase()}`, item)
+      );
+      const nextItems = Array.from(map.values());
+      const nextCats = Array.from(
+          new Set([...allCategories, ...nextItems.map((it) => normalizeCategory(it.tag))])
+      );
+      setItems(nextItems);
+      setCustomCategories(nextCats);
+      scheduleCloudPush(nextItems, nextCats, stats);
       showToast(`${imported.length}개의 단어를 불러왔습니다.`);
     } catch {
       showToast('백업 파일을 읽는 중 오류가 발생했습니다.');
@@ -839,22 +1047,10 @@ export function App() {
   const currentCardMetrics = useMemo(() => {
     const st = currentItem?.itemStats ?? createEmptyItemStats();
     const totalTries = st.wins + st.losses;
-    const winRate = totalTries > 0 ? ((st.wins / totalTries) * 100).toFixed(1) : '0.0';
-    const recentCount = st.recentHistory.length;
-    const recentWins = st.recentHistory.filter((x) => x === 'O').length;
-    const recentRate =
-        recentCount > 0 ? Math.round((recentWins / recentCount) * 100) : 0;
-    const recentStr =
-        recentCount > 0 ? `${st.recentHistory.join(' ')} (${recentRate}%)` : '- (0%)';
     const avgSec =
         totalTries > 0 ? (st.totalTimeMs / totalTries / 1000).toFixed(1) : '0.0';
     return {
       totalTries,
-      wins: st.wins,
-      losses: st.losses,
-      winRate,
-      recentCount,
-      recentStr,
       avgSec,
       lastSolved: formatDateTime(st.lastSolvedAt),
     };
@@ -862,6 +1058,7 @@ export function App() {
 
   const now = new Date();
   const scheduling = currentItem ? scheduler.repeat(currentItem.card, now) : null;
+  // 1번 요청: 카드 결과 버튼에서 승/패 표시 제거
   const ratingOptions: Array<{
     grade: Grade;
     label: string;
@@ -871,19 +1068,19 @@ export function App() {
       ? [
         {
           grade: Rating.Again,
-          label: '다시 (패)',
+          label: '다시',
           className: 'rate-again',
           intervalText: '오늘 끝부분 재복습',
         },
         {
           grade: Rating.Hard,
-          label: '어려움 (패)',
+          label: '어려움',
           className: 'rate-hard',
           intervalText: '오늘 끝부분 재복습',
         },
         {
           grade: Rating.Good,
-          label: '보통 (패)',
+          label: '보통',
           className: 'rate-good',
           intervalText:
               scheduling[Rating.Good].card.due.getTime() <=
@@ -893,7 +1090,7 @@ export function App() {
         },
         {
           grade: Rating.Easy,
-          label: '쉬움 (승)',
+          label: '쉬움',
           className: 'rate-easy',
           intervalText: formatInterval(scheduling[Rating.Easy].card.due, now),
         },
@@ -902,9 +1099,9 @@ export function App() {
 
   const allCounts = getFolderCounts('ALL');
 
+
   return (
       <div className="app-shell">
-        {/* 3번 요청: 최상단에는 '소이의 단어 암기장' 제목과 설명 글만 배치 */}
         <header className="app-header">
           <div>
             <h1 className="app-title">소이의 단어 암기장</h1>
@@ -914,13 +1111,13 @@ export function App() {
 
         {toastMsg && <div className="toast-banner">{toastMsg}</div>}
 
-        {/* 폴더 목록 & 통계 관리 모달 */}
+        {/* 폴더 목록 & 순서/이름/통계 관리 모달 */}
         {showGgModal && (
             <div className="gg-modal-backdrop" onClick={() => setShowGgModal(false)}>
               <div className="gg-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="gg-modal-header">
               <span className="gg-modal-title">
-                ⚙️ 문제집 폴더 목록 & 학습 통계 관리
+                ⚙️ 문제집 폴더 위치 · 이름 · 통계 관리
               </span>
                   <button
                       type="button"
@@ -932,7 +1129,9 @@ export function App() {
                 </div>
 
                 <div className="gg-box">
-                  <div className="gg-box-title">문제집 폴더 목록 (상위 책 / 하위 유닛)</div>
+                  <div className="gg-box-title">
+                    문제집 폴더 목록 (▲/▼ 버튼으로 위치 변경 · ✏️ 버튼으로 이름/상위폴더 수정)
+                  </div>
                   <div style={{ display: 'flex', gap: 4 }}>
                     <input
                         type="text"
@@ -975,7 +1174,7 @@ export function App() {
                       </button>
                     </div>
 
-                    {folderTree.map((group) => {
+                    {folderTree.map((group, gIdx) => {
                       const parentCounts = getFolderCounts(group.parent);
                       const isParentSelected = studyCategory === group.parent;
                       return (
@@ -996,6 +1195,24 @@ export function App() {
                                 <span className="folder-count">
                             {parentCounts.due}/{parentCounts.total}
                           </span>
+                              </button>
+                              <button
+                                  type="button"
+                                  className="folder-action-btn"
+                                  title="위로 이동"
+                                  disabled={gIdx === 0}
+                                  onClick={() => handleMoveParentFolder(group.parent, 'up')}
+                              >
+                                <ArrowUp size={13} />
+                              </button>
+                              <button
+                                  type="button"
+                                  className="folder-action-btn"
+                                  title="아래로 이동"
+                                  disabled={gIdx === folderTree.length - 1}
+                                  onClick={() => handleMoveParentFolder(group.parent, 'down')}
+                              >
+                                <ArrowDown size={13} />
                               </button>
                               <button
                                   type="button"
@@ -1025,7 +1242,7 @@ export function App() {
 
                             {group.children.length > 0 && (
                                 <div className="folder-sub-list">
-                                  {group.children.map((child) => {
+                                  {group.children.map((child, cIdx) => {
                                     const childCounts = getFolderCounts(child.fullPath);
                                     const isChildSelected = studyCategory === child.fullPath;
                                     return (
@@ -1045,6 +1262,32 @@ export function App() {
                                             <span className="folder-count">
                                     {childCounts.due}/{childCounts.total}
                                   </span>
+                                          </button>
+                                          <button
+                                              type="button"
+                                              className="folder-action-btn"
+                                              title="위로 이동"
+                                              disabled={cIdx === 0}
+                                              onClick={() =>
+                                                  handleMoveChildFolder(group.parent, child.fullPath, 'up')
+                                              }
+                                          >
+                                            <ArrowUp size={12} />
+                                          </button>
+                                          <button
+                                              type="button"
+                                              className="folder-action-btn"
+                                              title="아래로 이동"
+                                              disabled={cIdx === group.children.length - 1}
+                                              onClick={() =>
+                                                  handleMoveChildFolder(
+                                                      group.parent,
+                                                      child.fullPath,
+                                                      'down'
+                                                  )
+                                              }
+                                          >
+                                            <ArrowDown size={12} />
                                           </button>
                                           <button
                                               type="button"
@@ -1078,25 +1321,33 @@ export function App() {
                         className="secondary-btn"
                         onClick={handleResetFolderStats}
                     >
-                      선택 폴더 통계/일정 초기화
+                      선택 폴더 복습 일정 초기화
                     </button>
+                    {nasWebhookUrl && (
+                        <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={() => handleSyncFromNas(false, nasWebhookUrl, false)}
+                        >
+                          ☁️ 기기 간 즉시 동기화
+                        </button>
+                    )}
                   </div>
                 </div>
 
                 <div className="gg-summary-box">
                   <div>
                     <div>
-                      # Selected: {selectedPoolItems.length} / 총 {items.length}
+                      선택된 단어: {selectedPoolItems.length}개 / 전체 {items.length}개
                     </div>
                     <div>
-                      % Right (쉬움 비율): {selectionMetrics.rightPct}% ({selectionMetrics.wins} / 총{' '}
-                      {selectionMetrics.attempts})
+                      누적 학습 횟수: {selectionMetrics.totalTries}회 · 평균 시간:{' '}
+                      {selectionMetrics.avgSec}초
                     </div>
-                    <div>Avg. Time: {selectionMetrics.avgSec}s</div>
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button type="button" className="secondary-btn" onClick={handleExportJson}>
-                      Export...
+                      백업 저장
                     </button>
                     <button
                         type="button"
@@ -1123,8 +1374,7 @@ export function App() {
                       [{studyCategory === 'ALL' ? '전체 단어장' : studyCategory}] 오늘 복습 완료!
                     </h2>
                     <p style={{ color: '#64748b', fontSize: '0.86rem', marginBottom: 16 }}>
-                      오늘 총 <strong>{stats.todayReviewed}문제</strong> (쉬움 {stats.todayCorrect} /
-                      재학습 {stats.todayWrong}) 풀이를 마쳤습니다.
+                      오늘 총 <strong>{stats.todayReviewed}회</strong> 복습을 마쳤습니다.
                     </p>
                     <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
                       {studyCategory !== 'ALL' && (
@@ -1171,9 +1421,14 @@ export function App() {
                         <button
                             type="button"
                             className="icon-circle-btn"
+                            title={isFlipped ? '영어 예문 듣기' : '단어 발음 듣기'}
                             onClick={(e) => {
                               e.stopPropagation();
-                              speakWord(currentItem.word, speechRate);
+                              if (isFlipped) {
+                                speakExampleOrWord(currentItem, speechRate);
+                              } else {
+                                speakWord(currentItem.word, speechRate);
+                              }
                             }}
                         >
                           <Volume2 size={19} />
@@ -1190,7 +1445,16 @@ export function App() {
                             <>
                               <div className="meaning-display">{currentItem.meaning}</div>
                               {currentItem.example && (
-                                  <div className="example-box">{currentItem.example}</div>
+                                  <div
+                                      className="example-box"
+                                      title="터치하면 영어 예문을 다시 읽어줍니다"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        speakExampleOrWord(currentItem, speechRate);
+                                      }}
+                                  >
+                                    {currentItem.example}
+                                  </div>
                               )}
                             </>
                         )}
@@ -1199,7 +1463,7 @@ export function App() {
                       <div className="flip-hint">
                         <RotateCcw size={13} />
                         {!isFlipped
-                            ? '카드를 터치해 품사별 뜻 · 반의어 · 예문/해석 보기'
+                            ? '카드를 터치하면 뜻과 함께 영어 예문을 읽어줍니다'
                             : '다시/어려움은 오늘 마지막에 다시 나오고, 보통/쉬움은 다음 복습일로 넘어갑니다'}
                       </div>
                     </div>
@@ -1235,7 +1499,11 @@ export function App() {
                         <button
                             type="button"
                             className="icon-circle-btn"
-                            onClick={() => speakWord(currentItem.word, speechRate)}
+                            onClick={() =>
+                                spellingResult
+                                    ? speakExampleOrWord(currentItem, speechRate)
+                                    : speakWord(currentItem.word, speechRate)
+                            }
                         >
                           <Volume2 size={19} />
                         </button>
@@ -1253,7 +1521,7 @@ export function App() {
                                   onClick={() => speakWord(currentItem.word, speechRate)}
                               >
                                 <Volume2 size={14} />
-                                발음 듣기
+                                단어 발음 듣기
                               </button>
                               <button
                                   type="button"
@@ -1280,14 +1548,25 @@ export function App() {
                                   ref={spellingInputRef}
                                   type="text"
                                   className="spelling-input"
-                                  placeholder="영어 단어 입력..."
+                                  placeholder="영어 단어 입력 후 엔터 또는 확인..."
                                   value={typedAnswer}
                                   onChange={(e) => setTypedAnswer(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      submitSpellingAnswer();
+                                    }
+                                  }}
+                                  enterKeyHint="done"
                                   autoCapitalize="none"
                                   autoCorrect="off"
                                   spellCheck={false}
                               />
-                              <button type="submit" className="submit-btn">
+                              <button
+                                  type="submit"
+                                  className="submit-btn"
+                                  onClick={handleCheckSpelling}
+                              >
                                 확인
                               </button>
                             </form>
@@ -1311,7 +1590,12 @@ export function App() {
                                 {currentItem.phonetic && <span>{currentItem.phonetic}</span>}
                               </div>
                               {currentItem.example && (
-                                  <div className="example-box">{currentItem.example}</div>
+                                  <div
+                                      className="example-box"
+                                      onClick={() => speakExampleOrWord(currentItem, speechRate)}
+                                  >
+                                    {currentItem.example}
+                                  </div>
                               )}
                             </div>
                         )}
@@ -1375,7 +1659,13 @@ export function App() {
                             onClick={() => {
                               speechRateRef.current = r;
                               setSpeechRate(r);
-                              if (currentItem) speakWord(currentItem.word, r);
+                              if (currentItem) {
+                                if (isFlipped || spellingResult) {
+                                  speakExampleOrWord(currentItem, r);
+                                } else {
+                                  speakWord(currentItem.word, r);
+                                }
+                              }
                             }}
                         >
                           {r}x
@@ -1393,7 +1683,7 @@ export function App() {
                 </div>
               </div>
 
-              {/* 3순위 (카드 아래): 폴더/통계 관리 버튼, 폴더 열기, NAS 동기화, 연속 학습일, 남은 복습 */}
+              {/* 3순위 (카드 아래): 폴더/통계 관리, 폴더 선택, 기기 간 동기화, 연속 학습일, 남은 복습 */}
               <div
                   className="header-badges"
                   style={{
@@ -1436,7 +1726,7 @@ export function App() {
                       type="button"
                       className="mini-icon-btn"
                       onClick={() => setShowNasConfig((prev) => !prev)}
-                      title="NAS n8n 웹훅 설정"
+                      title="NAS 동기화 웹훅 설정"
                   >
                     <Server size={15} />
                   </button>
@@ -1445,7 +1735,7 @@ export function App() {
                           type="button"
                           className="mini-icon-btn"
                           onClick={() => handleSyncFromNas(false, undefined, false)}
-                          title="NAS에서 텔레그램 단어 동기화"
+                          title="PC · 아이폰 · 안드로이드 동기화"
                       >
                         <RefreshCw size={15} className={isSyncing ? 'spin' : ''} />
                       </button>
@@ -1476,7 +1766,7 @@ export function App() {
               {showNasConfig && (
                   <div className="api-key-box">
                     <div>
-                      <strong>NAS n8n Production Webhook 주소</strong>
+                      <strong>NAS n8n 동기화 주소 (PC · 아이폰 · 안드로이드 공용)</strong>
                     </div>
                     <div className="api-key-row">
                       <input
@@ -1496,7 +1786,7 @@ export function App() {
                           className="secondary-btn"
                           onClick={() => handleSyncFromNas(false, nasUrlInput, true)}
                       >
-                        🔄 NAS 단어 전체 다시 불러오기
+                        🔄 서버 데이터 전체 다시 불러오기
                       </button>
                       <button
                           type="button"
@@ -1510,7 +1800,7 @@ export function App() {
                   </div>
               )}
 
-              {/* 폴더 선택 버튼을 눌렀을 때 카드 아래에 펼쳐지는 폴더 트리 */}
+              {/* 폴더 선택 버튼을 눌렀을 때 카드 아래에 펼쳐지는 폴더 트리 (위치 변경 및 이름 수정 지원) */}
               {isFolderSidebarOpen && (
                   <aside className="folder-sidebar">
                     <div className="folder-sidebar-header">
@@ -1524,7 +1814,7 @@ export function App() {
                           style={{ padding: '3px 7px', fontSize: '0.7rem' }}
                           onClick={() => setShowGgModal(true)}
                       >
-                        + 폴더 편집
+                        + 새 폴더 / 전체 편집
                       </button>
                     </div>
 
@@ -1548,7 +1838,7 @@ export function App() {
                         </button>
                       </div>
 
-                      {folderTree.map((group) => {
+                      {folderTree.map((group, gIdx) => {
                         const parentCounts = getFolderCounts(group.parent);
                         const isParentActive = studyCategory === group.parent;
                         const isCollapsed = !!collapsedParents[group.parent];
@@ -1594,6 +1884,24 @@ export function App() {
                                 <button
                                     type="button"
                                     className="folder-action-btn"
+                                    title="위로 이동"
+                                    disabled={gIdx === 0}
+                                    onClick={() => handleMoveParentFolder(group.parent, 'up')}
+                                >
+                                  <ArrowUp size={12} />
+                                </button>
+                                <button
+                                    type="button"
+                                    className="folder-action-btn"
+                                    title="아래로 이동"
+                                    disabled={gIdx === folderTree.length - 1}
+                                    onClick={() => handleMoveParentFolder(group.parent, 'down')}
+                                >
+                                  <ArrowDown size={12} />
+                                </button>
+                                <button
+                                    type="button"
+                                    className="folder-action-btn"
                                     title="하위 유닛 추가"
                                     onClick={() => handleQuickAddSubfolder(group.parent)}
                                 >
@@ -1619,7 +1927,7 @@ export function App() {
 
                               {!isCollapsed && group.children.length > 0 && (
                                   <div className="folder-sub-list">
-                                    {group.children.map((child) => {
+                                    {group.children.map((child, cIdx) => {
                                       const childCounts = getFolderCounts(child.fullPath);
                                       const isChildActive = studyCategory === child.fullPath;
                                       return (
@@ -1640,6 +1948,32 @@ export function App() {
                                               <span className="folder-count">
                                     {childCounts.due}/{childCounts.total}
                                   </span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="folder-action-btn"
+                                                title="위로 이동"
+                                                disabled={cIdx === 0}
+                                                onClick={() =>
+                                                    handleMoveChildFolder(group.parent, child.fullPath, 'up')
+                                                }
+                                            >
+                                              <ArrowUp size={11} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="folder-action-btn"
+                                                title="아래로 이동"
+                                                disabled={cIdx === group.children.length - 1}
+                                                onClick={() =>
+                                                    handleMoveChildFolder(
+                                                        group.parent,
+                                                        child.fullPath,
+                                                        'down'
+                                                    )
+                                                }
+                                            >
+                                              <ArrowDown size={11} />
                                             </button>
                                             <button
                                                 type="button"
@@ -1669,7 +2003,7 @@ export function App() {
                   </aside>
               )}
 
-              {/* 4순위 (제일 하단): 버튼 클릭 시에만 펼쳐지는 상세 학습 통계 */}
+              {/* 4순위 (제일 하단): 승패 없이 깔끔한 FSRS 학습 통계 */}
               <div className="bottom-stats-wrap">
                 <button
                     type="button"
@@ -1684,20 +2018,11 @@ export function App() {
                     <div className="gg-stats-banner">
                       <div className="gg-stats-line1">
                         [오늘 공부량] 총{' '}
-                        <span className="gg-blue">{stats.todayReviewed}문제</span> 풀이 (쉬움{' '}
-                        <span className="gg-green">{stats.todayCorrect}</span> / 재복습{' '}
-                        <span className="gg-red">{stats.todayWrong}</span>)
-                      </div>
-                      <div className="gg-stats-line2">
-                        [이 문제 전적] 총 {currentCardMetrics.totalTries}전{' '}
-                        <span className="gg-green">{currentCardMetrics.wins}승</span>{' '}
-                        <span className="gg-red">{currentCardMetrics.losses}패</span> (통산{' '}
-                        {currentCardMetrics.winRate}%) &nbsp;|&nbsp; [최근{' '}
-                        {currentCardMetrics.recentCount}회]{' '}
-                        <span className="gg-green">{currentCardMetrics.recentStr}</span>
+                        <span className="gg-blue">{stats.todayReviewed}문제</span> 복습 완료
                       </div>
                       <div className="gg-stats-line3">
-                        평균 시간: {currentCardMetrics.avgSec}초 &nbsp;|&nbsp; 상태: ●{' '}
+                        이 단어 누적 복습: {currentCardMetrics.totalTries}회 &nbsp;|&nbsp; 평균 시간:{' '}
+                        {currentCardMetrics.avgSec}초 &nbsp;|&nbsp; 상태: ●{' '}
                         {currentItem ? getStateLabel(currentItem.card.state) : '대기 중'}{' '}
                         &nbsp;|&nbsp; 마지막 풀이: {currentCardMetrics.lastSolved}
                       </div>
@@ -1962,26 +2287,186 @@ export function App() {
             </div>
         )}
 
+        {/* 2번 요청: 단어 목록 화면에서도 계층형 문제집 폴더 트리로 조회 및 편집 */}
         {activeTab === 'list' && (
             <div className="panel-card">
-              <div className="category-strip">
-                <button
-                    type="button"
-                    className={`cat-chip ${listCategory === 'ALL' ? 'active' : ''}`}
-                    onClick={() => setListCategory('ALL')}
-                >
-                  전체 ({items.length})
-                </button>
-                {allCategories.map((cat) => (
+              <div className="list-folder-tree-box">
+                <div className="folder-sidebar-header">
+              <span className="folder-sidebar-title">
+                <FolderOpen size={15} />
+                문제집 폴더 목록 (클릭하여 폴더별 단어 보기 · ▲/▼ 위치 이동 · ✏️ 이름 수정)
+              </span>
+                  <button
+                      type="button"
+                      className="helper-chip"
+                      style={{ padding: '3px 8px', fontSize: '0.72rem' }}
+                      onClick={() => setShowGgModal(true)}
+                  >
+                    + 새 폴더 추가
+                  </button>
+                </div>
+
+                <div className="folder-list">
+                  <div className="folder-item-wrap">
                     <button
-                        key={cat}
                         type="button"
-                        className={`cat-chip ${listCategory === cat ? 'active' : ''}`}
-                        onClick={() => setListCategory(cat)}
+                        className={`folder-item ${listCategory === 'ALL' ? 'active' : ''}`}
+                        onClick={() => setListCategory('ALL')}
                     >
-                      {cat} ({getFolderCounts(cat).total})
+                  <span className="folder-item-left">
+                    <FolderOpen size={15} />
+                    <span className="folder-name">전체 단어장</span>
+                  </span>
+                      <span className="folder-count">{items.length}단어</span>
                     </button>
-                ))}
+                  </div>
+
+                  {folderTree.map((group, gIdx) => {
+                    const parentCounts = getFolderCounts(group.parent);
+                    const isParentActive = listCategory === group.parent;
+                    const isCollapsed = !!collapsedParents[group.parent];
+
+                    return (
+                        <div key={group.parent} className="folder-tree-group">
+                          <div className="folder-item-wrap">
+                            {group.children.length > 0 && (
+                                <button
+                                    type="button"
+                                    className="folder-expand-btn"
+                                    onClick={() =>
+                                        setCollapsedParents((prev) => ({
+                                          ...prev,
+                                          [group.parent]: !prev[group.parent],
+                                        }))
+                                    }
+                                >
+                                  {isCollapsed ? (
+                                      <ChevronRight size={13} />
+                                  ) : (
+                                      <ChevronDown size={13} />
+                                  )}
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className={`folder-item ${isParentActive ? 'active' : ''}`}
+                                onClick={() => setListCategory(group.parent)}
+                            >
+                        <span className="folder-item-left">
+                          {isParentActive ? <FolderOpen size={14} /> : <Folder size={14} />}
+                          <span className="folder-name">★ {group.parent}</span>
+                        </span>
+                              <span className="folder-count">{parentCounts.total}단어</span>
+                            </button>
+                            <button
+                                type="button"
+                                className="folder-action-btn"
+                                title="위로 이동"
+                                disabled={gIdx === 0}
+                                onClick={() => handleMoveParentFolder(group.parent, 'up')}
+                            >
+                              <ArrowUp size={12} />
+                            </button>
+                            <button
+                                type="button"
+                                className="folder-action-btn"
+                                title="아래로 이동"
+                                disabled={gIdx === folderTree.length - 1}
+                                onClick={() => handleMoveParentFolder(group.parent, 'down')}
+                            >
+                              <ArrowDown size={12} />
+                            </button>
+                            <button
+                                type="button"
+                                className="folder-action-btn"
+                                title="하위 유닛 추가"
+                                onClick={() => handleQuickAddSubfolder(group.parent)}
+                            >
+                              <Plus size={12} />
+                            </button>
+                            <button
+                                type="button"
+                                className="folder-action-btn"
+                                title="폴더 이름 변경"
+                                onClick={() => handleRenameFolder(group.parent)}
+                            >
+                              <Pencil size={12} />
+                            </button>
+                            <button
+                                type="button"
+                                className="folder-action-btn danger"
+                                title="폴더 삭제"
+                                onClick={() => handleDeleteCategory(group.parent)}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+
+                          {!isCollapsed && group.children.length > 0 && (
+                              <div className="folder-sub-list">
+                                {group.children.map((child, cIdx) => {
+                                  const childCounts = getFolderCounts(child.fullPath);
+                                  const isChildActive = listCategory === child.fullPath;
+                                  return (
+                                      <div key={child.fullPath} className="folder-item-wrap">
+                                        <button
+                                            type="button"
+                                            className={`folder-item ${isChildActive ? 'active' : ''}`}
+                                            onClick={() => setListCategory(child.fullPath)}
+                                        >
+                                <span className="folder-item-left">
+                                  <Folder size={13} />
+                                  <span className="folder-name">{child.childName}</span>
+                                </span>
+                                          <span className="folder-count">{childCounts.total}단어</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="folder-action-btn"
+                                            title="위로 이동"
+                                            disabled={cIdx === 0}
+                                            onClick={() =>
+                                                handleMoveChildFolder(group.parent, child.fullPath, 'up')
+                                            }
+                                        >
+                                          <ArrowUp size={11} />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="folder-action-btn"
+                                            title="아래로 이동"
+                                            disabled={cIdx === group.children.length - 1}
+                                            onClick={() =>
+                                                handleMoveChildFolder(group.parent, child.fullPath, 'down')
+                                            }
+                                        >
+                                          <ArrowDown size={11} />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="folder-action-btn"
+                                            title="이름 변경"
+                                            onClick={() => handleRenameFolder(child.fullPath)}
+                                        >
+                                          <Pencil size={11} />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="folder-action-btn danger"
+                                            title="삭제"
+                                            onClick={() => handleDeleteCategory(child.fullPath)}
+                                        >
+                                          <Trash2 size={11} />
+                                        </button>
+                                      </div>
+                                  );
+                                })}
+                              </div>
+                          )}
+                        </div>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="backup-bar">
@@ -2011,7 +2496,7 @@ export function App() {
                 <input
                     type="text"
                     className="search-input"
-                    placeholder="단어, 뜻, 예문 검색..."
+                    placeholder={`[${listCategory === 'ALL' ? '전체 단어장' : listCategory}] 내 단어, 뜻, 예문 검색...`}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                 />
@@ -2066,24 +2551,23 @@ export function App() {
                                   className="submit-btn"
                                   onClick={() => {
                                     const norm = normalizeCategory(editTag);
-                                    setCustomCategories((prev) =>
-                                        Array.from(new Set([...prev, norm]))
+                                    const nextCats = Array.from(new Set([...allCategories, norm]));
+                                    const nextItems = items.map((it) =>
+                                        it.id === item.id
+                                            ? {
+                                              ...it,
+                                              word: editWord.trim(),
+                                              phonetic: editPhonetic.trim() || undefined,
+                                              meaning: editMeaning.trim(),
+                                              example: editExample.trim() || undefined,
+                                              tag: norm,
+                                            }
+                                            : it
                                     );
-                                    setItems((prev) =>
-                                        prev.map((it) =>
-                                            it.id === item.id
-                                                ? {
-                                                  ...it,
-                                                  word: editWord.trim(),
-                                                  phonetic: editPhonetic.trim() || undefined,
-                                                  meaning: editMeaning.trim(),
-                                                  example: editExample.trim() || undefined,
-                                                  tag: norm,
-                                                }
-                                                : it
-                                        )
-                                    );
+                                    setCustomCategories(nextCats);
+                                    setItems(nextItems);
                                     setEditingId(null);
+                                    scheduleCloudPush(nextItems, nextCats, stats);
                                     showToast('단어가 수정되었습니다.');
                                   }}
                               >
@@ -2103,11 +2587,19 @@ export function App() {
                               </div>
                               <div className="word-row-meaning">{item.meaning}</div>
                               {item.example && (
-                                  <div className="word-row-example">{item.example}</div>
+                                  <div
+                                      className="word-row-example"
+                                      style={{ cursor: 'pointer' }}
+                                      title="터치하면 영어 예문을 읽어줍니다"
+                                      onClick={() => speakExampleOrWord(item, speechRate)}
+                                  >
+                                    {item.example}
+                                  </div>
                               )}
                               <div className="word-row-meta">
-                                전적: {item.itemStats?.wins || 0}승 {item.itemStats?.losses || 0}패 ·
-                                다음 복습:{' '}
+                                복습 횟수:{' '}
+                                {(item.itemStats?.wins || 0) + (item.itemStats?.losses || 0)}회 · 다음
+                                복습:{' '}
                                 {item.card.due.toLocaleDateString('ko-KR', {
                                   month: 'short',
                                   day: 'numeric',
@@ -2118,6 +2610,7 @@ export function App() {
                               <button
                                   type="button"
                                   className="mini-icon-btn"
+                                  title="단어 발음 듣기"
                                   onClick={() => speakWord(item.word, speechRate)}
                               >
                                 <Volume2 size={15} />
@@ -2125,6 +2618,7 @@ export function App() {
                               <button
                                   type="button"
                                   className="mini-icon-btn"
+                                  title="단어 수정"
                                   onClick={() => {
                                     setEditingId(item.id);
                                     setEditWord(item.word);
@@ -2139,9 +2633,8 @@ export function App() {
                               <button
                                   type="button"
                                   className="mini-icon-btn danger"
-                                  onClick={() =>
-                                      setItems((prev) => prev.filter((it) => it.id !== item.id))
-                                  }
+                                  title="단어 삭제"
+                                  onClick={() => handleDeleteItem(item)}
                               >
                                 <Trash2 size={15} />
                               </button>

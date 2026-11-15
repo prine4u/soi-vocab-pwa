@@ -4,8 +4,9 @@ import type { VocabItem, StudyStats, VocabItemStats } from '../types';
 const STORAGE_KEY = 'soi_vocab_items_v1';
 const STATS_KEY = 'soi_vocab_stats_v1';
 const CATEGORIES_KEY = 'soi_vocab_categories_v1';
+const UPDATED_AT_KEY = 'soi_vocab_updated_at_v1';
 
-export const DEFAULT_CATEGORY = 'Vocabulary/Unit 01';
+export const DEFAULT_CATEGORY = 'Vocabulary Engine/Unit 01';
 
 export function getDateKey(date: Date = new Date()): string {
     const y = date.getFullYear();
@@ -18,28 +19,55 @@ export function formatDateTime(ts?: number): string {
     if (!ts) return '-';
     const d = new Date(ts);
     const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
+    const m = String(datePad(d.getMonth() + 1));
+    const day = String(datePad(d.getDate()));
+    const hh = String(datePad(d.getHours()));
+    const mm = String(datePad(d.getMinutes()));
     return `${y}-${m}-${day} ${hh}:${mm}`;
 }
 
+function datePad(n: number): string {
+    return String(n).padStart(2, '0');
+}
+
+export function loadLocalUpdatedAt(): number {
+    return Number(localStorage.getItem(UPDATED_AT_KEY)) || 0;
+}
+
+export function saveLocalUpdatedAt(ts: number = Date.now()): number {
+    localStorage.setItem(UPDATED_AT_KEY, String(ts));
+    return ts;
+}
+
 /**
- * 단어마다 첫 글자 대문자 + 그다음 소문자 + 숫자 앞 한 칸 띄어쓰기 + 한 자리 유닛 번호 0 채우기
- * 예: "unit9" -> "Unit 09", "vocabulary engine" -> "Vocabulary Engine"
+ * 예문 텍스트에서 한글 해석과 A:/B: 기호를 제거하고 영어 문장만 추출
  */
+export function extractEnglishOnly(rawExample?: string): string {
+    if (!rawExample) return '';
+    const lines = rawExample
+        .split('\n')
+        .map((line) => {
+            // 줄 앞의 A:, B: 등 화자 표시 제거
+            let cleaned = line.replace(/^[A-Za-z]\s*:\s*/g, '');
+            // 한글 및 한글 괄호 설명 제거
+            cleaned = cleaned.replace(/[ㄱ-ㅎㅏ-ㅣ가-힣]+/g, ' ');
+            cleaned = cleaned.replace(/\(\s*\)/g, ' ');
+            cleaned = cleaned.replace(/\s+/g, ' ').trim();
+            return cleaned;
+        })
+        .filter((line) => /[A-Za-z]{2,}/.test(line));
+
+    return lines.join(' ');
+}
+
 export function formatFolderSegment(raw: string): string {
     let s = raw.trim();
     if (!s) return '';
-    // 영문/한글과 숫자 사이 공백 한 칸 자동 삽입
     s = s.replace(/([A-Za-z가-힣])(\d)/g, '$1 $2').replace(/(\d)([A-Za-z가-힣])/g, '$1 $2');
     s = s.replace(/\s+/g, ' ');
-    // 영어 단어 Title Case 변환
     s = s.replace(/[A-Za-z]+/g, (word) => {
         return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     });
-    // Unit 9 -> Unit 09 형태 보정
     s = s.replace(
         /\b(Unit|Day|Part|Chapter|Lesson)\s+(\d)\b/gi,
         (_, prefix: string, digit: string) =>
@@ -89,7 +117,7 @@ export function createNewVocabItem(
     };
 }
 
-function hydrateCard(raw?: Partial<Card>): Card {
+export function hydrateCard(raw?: Partial<Card>): Card {
     const base = createEmptyCard();
     if (!raw) return base;
     return {
@@ -100,13 +128,10 @@ function hydrateCard(raw?: Partial<Card>): Card {
     };
 }
 
-export function loadVocabItems(): VocabItem[] {
-    try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return [];
-        const parsed = JSON.parse(raw) as VocabItem[];
-        if (!Array.isArray(parsed)) return [];
-        return parsed.map((item) => ({
+export function hydrateVocabItems(list: unknown[]): VocabItem[] {
+    return list
+        .filter((item): item is VocabItem => !!item && typeof item === 'object')
+        .map((item) => ({
             ...item,
             phonetic: item.phonetic?.trim() || undefined,
             tag: normalizeCategory(item.tag),
@@ -123,6 +148,15 @@ export function loadVocabItems(): VocabItem[] {
                 : createEmptyItemStats(),
             card: hydrateCard(item.card),
         }));
+}
+
+export function loadVocabItems(): VocabItem[] {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) return [];
+        return hydrateVocabItems(parsed);
     } catch {
         return [];
     }
@@ -138,26 +172,28 @@ export function loadCustomCategories(): string[] {
         if (!raw) return [];
         const parsed = JSON.parse(raw) as unknown;
         if (!Array.isArray(parsed)) return [];
-        const set = new Set<string>();
+        const result: string[] = [];
         parsed.forEach((c) => {
             if (typeof c === 'string' && c.trim() && c.trim() !== '기본 학습장') {
-                set.add(normalizeCategory(c));
+                const norm = normalizeCategory(c);
+                if (!result.includes(norm)) result.push(norm);
             }
         });
-        return Array.from(set);
+        return result;
     } catch {
         return [];
     }
 }
 
 export function saveCustomCategories(categories: string[]): void {
-    const set = new Set<string>();
+    const result: string[] = [];
     categories.forEach((c) => {
         if (c.trim() && c.trim() !== '기본 학습장') {
-            set.add(normalizeCategory(c));
+            const norm = normalizeCategory(c);
+            if (!result.includes(norm)) result.push(norm);
         }
     });
-    localStorage.setItem(CATEGORIES_KEY, JSON.stringify(Array.from(set)));
+    localStorage.setItem(CATEGORIES_KEY, JSON.stringify(result));
 }
 
 export function loadStudyStats(): StudyStats {
@@ -245,36 +281,5 @@ export function parseImportedVocab(jsonText: string): VocabItem[] {
         throw new Error('올바른 단어장 JSON 형식이 아닙니다.');
     }
 
-    const now = Date.now();
-    const result: VocabItem[] = [];
-
-    list.forEach((entry, idx) => {
-        if (!entry || typeof entry !== 'object') return;
-        const obj = entry as Partial<VocabItem>;
-        if (typeof obj.word !== 'string' || typeof obj.meaning !== 'string') return;
-        const word = obj.word.trim();
-        const meaning = obj.meaning.trim();
-        if (!word || !meaning) return;
-
-        result.push({
-            id:
-                typeof obj.id === 'string' && obj.id
-                    ? obj.id
-                    : `${now}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
-            word,
-            phonetic:
-                typeof obj.phonetic === 'string' && obj.phonetic.trim()
-                    ? obj.phonetic.trim()
-                    : undefined,
-            meaning,
-            example:
-                typeof obj.example === 'string' && obj.example.trim() ? obj.example.trim() : undefined,
-            tag: normalizeCategory(typeof obj.tag === 'string' ? obj.tag : undefined),
-            itemStats: obj.itemStats ?? createEmptyItemStats(),
-            card: hydrateCard(obj.card),
-            createdAt: typeof obj.createdAt === 'number' ? obj.createdAt : now + idx,
-        });
-    });
-
-    return result;
+    return hydrateVocabItems(list);
 }
