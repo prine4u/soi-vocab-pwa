@@ -34,11 +34,13 @@ import {
   CheckSquare,
   Square,
   RefreshCw,
+
+
+// [변경 후: 위 구간을 아래 코드로 교체]
   Server,
   PanelLeftClose,
   PanelLeftOpen,
   Settings2,
-  Tag,
   ChevronRight,
   ChevronDown,
 } from 'lucide-react';
@@ -64,9 +66,8 @@ import {
   normalizeCategory,
   loadCustomCategories,
   saveCustomCategories,
-  loadCustomNoteTags,
-  saveCustomNoteTags,
 } from './utils/storage';
+
 import {
   loadGeminiApiKey,
   saveGeminiApiKey,
@@ -123,7 +124,8 @@ export function App() {
   const [customCategories, setCustomCategories] = useState<string[]>(() =>
       loadCustomCategories()
   );
-  const [noteTags, setNoteTags] = useState<string[]>(() => loadCustomNoteTags());
+
+// [변경 후: 위 구간 전체를 아래 코드로 교체]
   const [stats, setStats] = useState<StudyStats>(() => loadStudyStats());
   const [activeTab, setActiveTab] = useState<AppTab>('study');
   const [studyMode, setStudyMode] = useState<StudyMode>('flashcard');
@@ -132,16 +134,14 @@ export function App() {
   const [isFolderSidebarOpen, setIsFolderSidebarOpen] = useState<boolean>(true);
   const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
 
-  // Folder, Tag Filter, Sort, GoGrinder Modal states
+  // Folder, Sort, GoGrinder Modal states
   const [studyCategory, setStudyCategory] = useState<string>('ALL');
   const [listCategory, setListCategory] = useState<string>('ALL');
   const [targetCategory, setTargetCategory] = useState<string>('Vocabulary/Unit 09');
-  const [selectedNoteTag, setSelectedNoteTag] = useState<string>('ALL');
   const [sortOrder, setSortOrder] = useState<SortOrder>('order');
   const [showGgModal, setShowGgModal] = useState<boolean>(false);
   const [newParentFolder, setNewParentFolder] = useState<string>('');
   const [newChildFolder, setNewChildFolder] = useState<string>('');
-  const [newNoteTagInput, setNewNoteTagInput] = useState<string>('');
 
   // Card study & timer states
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
@@ -197,10 +197,6 @@ export function App() {
   }, [customCategories]);
 
   useEffect(() => {
-    saveCustomNoteTags(noteTags);
-  }, [noteTags]);
-
-  useEffect(() => {
     saveStudyStats(stats);
   }, [stats]);
 
@@ -209,7 +205,6 @@ export function App() {
     setTimeout(() => setToastMsg(''), 3200);
   };
 
-  // All category paths & Hierarchical tree builder
   const allCategories = useMemo(() => {
     const set = new Set<string>(customCategories);
     items.forEach((item) => set.add(normalizeCategory(item.tag)));
@@ -246,20 +241,10 @@ export function App() {
     return { due, total };
   };
 
-  // Filtered items for Current Selection (GoGrinder logic)
   const selectedPoolItems = useMemo(() => {
-    return items.filter((item) => {
-      if (!isCategoryMatch(item.tag, studyCategory)) return false;
-      if (selectedNoteTag === 'NONE') {
-        return !item.customTags || item.customTags.length === 0;
-      }
-      if (selectedNoteTag !== 'ALL') {
-        return item.customTags?.includes(selectedNoteTag) ?? false;
-      }
-      return true;
-    });
-  }, [items, studyCategory, selectedNoteTag]);
-
+    return items.filter((item) => isCategoryMatch(item.tag, studyCategory));
+  }, [items, studyCategory]);
+  
   // Selection statistics for GoGrinder modal
   const selectionMetrics = useMemo(() => {
     let wins = 0;
@@ -441,29 +426,17 @@ export function App() {
     showToast(`🔄 [${label}] 통계가 초기화되었습니다.`);
   };
 
-  const handleToggleItemCustomTag = (itemId: string, tagName: string) => {
-    setItems((prev) =>
-        prev.map((item) => {
-          if (item.id !== itemId) return item;
-          const existing = item.customTags || [];
-          const next = existing.includes(tagName)
-              ? existing.filter((t) => t !== tagName)
-              : [...existing, tagName];
-          return { ...item, customTags: next };
-        })
-    );
-  };
-
+// [변경 후: 위 구간을 아래 코드로 교체]
   const handleRate = (grade: Grade) => {
     if (!currentItem) return;
     const nowDate = new Date();
     const elapsedMs = Math.min(120000, Math.max(500, Date.now() - cardStartTimeRef.current));
     const record = scheduler.repeat(currentItem.card, nowDate)[grade];
 
+    // 오직 '쉬움(Rating.Easy)'을 선택했을 때만 승(Win), 나머지는 모두 패(Loss)
     const isWin =
-        studyMode === 'spelling'
-            ? spellingResult === 'correct'
-            : grade === Rating.Good || grade === Rating.Easy;
+        grade === Rating.Easy &&
+        (studyMode !== 'spelling' || spellingResult === 'correct');
 
     setItems((prev) =>
         prev.map((item) => {
@@ -474,13 +447,9 @@ export function App() {
             isWin ? ('O' as const) : ('X' as const),
           ].slice(-10);
 
-          const autoTags = new Set(item.customTags || []);
-          if (!isWin) autoTags.add('오답');
-
           return {
             ...item,
             card: record.card,
-            customTags: Array.from(autoTags),
             itemStats: {
               wins: prevStats.wins + (isWin ? 1 : 0),
               losses: prevStats.losses + (isWin ? 0 : 1),
@@ -804,25 +773,25 @@ export function App() {
       ? [
         {
           grade: Rating.Again,
-          label: '다시 (패)',
+          label: '다시',
           className: 'rate-again',
           intervalText: formatInterval(scheduling[Rating.Again].card.due, now),
         },
         {
           grade: Rating.Hard,
-          label: '어려움 (패)',
+          label: '어려움',
           className: 'rate-hard',
           intervalText: formatInterval(scheduling[Rating.Hard].card.due, now),
         },
         {
           grade: Rating.Good,
-          label: '보통 (승)',
+          label: '보통',
           className: 'rate-good',
           intervalText: formatInterval(scheduling[Rating.Good].card.due, now),
         },
         {
           grade: Rating.Easy,
-          label: '쉬움 (승)',
+          label: '쉬움',
           className: 'rate-easy',
           intervalText: formatInterval(scheduling[Rating.Easy].card.due, now),
         },
@@ -855,7 +824,7 @@ export function App() {
                 onClick={() => setShowGgModal(true)}
             >
               <Settings2 size={14} />
-              폴더/태그/통계 관리
+              폴더/통계 관리
             </button>
             <button
                 type="button"
@@ -930,13 +899,13 @@ export function App() {
 
         {toastMsg && <div className="toast-banner">{toastMsg}</div>}
 
-        {/* GoGrinder Style Current Selection & Folder/Tag Manager Modal (Image 2) */}
+        {/* 폴더 목록 & 통계 관리 모달 */}
         {showGgModal && (
             <div className="gg-modal-backdrop" onClick={() => setShowGgModal(false)}>
               <div className="gg-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="gg-modal-header">
               <span className="gg-modal-title">
-                ⚙️ 문제집 폴더 목록 & 오답노트/태그 관리 (Current Selection)
+                ⚙️ 문제집 폴더 목록 & 통계 관리 (Current Selection)
               </span>
                   <button
                       type="button"
@@ -1112,68 +1081,9 @@ export function App() {
                     </div>
                   </div>
 
-                  {/* 오른쪽: 오답노트 / 태그 관리 및 출제 순서 */}
+                  {/* 오른쪽: 출제 순서 설정 */}
                   <div className="gg-box">
-                    <div className="gg-box-title">오답노트 / 태그 관리</div>
-                    <div className="gg-tag-list">
-                      <button
-                          type="button"
-                          className={`gg-tag-item ${selectedNoteTag === 'ALL' ? 'active' : ''}`}
-                          onClick={() => setSelectedNoteTag('ALL')}
-                      >
-                        <span>ALL (전체 보기)</span>
-                      </button>
-                      <button
-                          type="button"
-                          className={`gg-tag-item ${selectedNoteTag === 'NONE' ? 'active' : ''}`}
-                          onClick={() => setSelectedNoteTag('NONE')}
-                      >
-                        <span>NONE (태그 없음)</span>
-                      </button>
-                      {noteTags.map((tag) => (
-                          <div
-                              key={tag}
-                              className={`gg-tag-item ${selectedNoteTag === tag ? 'active' : ''}`}
-                              onClick={() => setSelectedNoteTag(tag)}
-                          >
-                            <span>{tag}</span>
-                            <button
-                                type="button"
-                                className="folder-action-btn danger"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setNoteTags((prev) => prev.filter((t) => t !== tag));
-                                  if (selectedNoteTag === tag) setSelectedNoteTag('ALL');
-                                }}
-                            >
-                              삭제
-                            </button>
-                          </div>
-                      ))}
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <input
-                          type="text"
-                          className="mini-input"
-                          placeholder="새 오답 태그 (예: 헷갈림)"
-                          value={newNoteTagInput}
-                          onChange={(e) => setNewNoteTagInput(e.target.value)}
-                      />
-                      <button
-                          type="button"
-                          className="secondary-btn"
-                          onClick={() => {
-                            const t = newNoteTagInput.trim();
-                            if (!t) return;
-                            setNoteTags((prev) => Array.from(new Set([...prev, t])));
-                            setNewNoteTagInput('');
-                          }}
-                      >
-                        태그 추가
-                      </button>
-                    </div>
-
+                    <div className="gg-box-title">출제 순서 및 학습 설정</div>
                     <div className="field-group">
                       <label className="field-label">출제 순서:</label>
                       <select
@@ -1183,7 +1093,7 @@ export function App() {
                       >
                         <option value="order">문제 번호 순서대로 (기본)</option>
                         <option value="due">복습 시급한 순서대로</option>
-                        <option value="wrong_rate">오답 많은 순서대로</option>
+                        <option value="wrong_rate">오답(패) 많은 순서대로</option>
                         <option value="random">무작위 섞기</option>
                       </select>
                     </div>
@@ -1382,7 +1292,7 @@ export function App() {
 
               {/* 오른쪽 메인 학습 영역 */}
               <div className="study-main">
-                {/* 3번째 이미지 스타일: 실시간 오늘 공부량 & 이 문제 전적 배너 */}
+                {/* 실시간 오늘 공부량 & 이 문제 전적 배너 */}
                 <div className="gg-stats-banner">
                   <div className="gg-stats-line1">
                     [오늘 공부량] 총{' '}
@@ -1432,16 +1342,6 @@ export function App() {
                   </div>
 
                   <div className="toolbar-actions">
-                    {selectedNoteTag !== 'ALL' && (
-                        <button
-                            type="button"
-                            className="helper-chip active"
-                            onClick={() => setSelectedNoteTag('ALL')}
-                        >
-                          <Tag size={12} />
-                          태그: {selectedNoteTag} ✕
-                        </button>
-                    )}
                     <button
                         type="button"
                         className={`auto-audio-btn ${speechRate < 0.8 ? 'on' : ''}`}
@@ -1518,11 +1418,6 @@ export function App() {
                         <FolderOpen size={11} />
                               {normalizeCategory(currentItem.tag)}
                       </span>
-                            {currentItem.customTags?.map((t) => (
-                                <span key={t} className="note-tag-badge">
-                          #{t}
-                        </span>
-                            ))}
                           </div>
                           <button
                               type="button"
@@ -1552,31 +1447,11 @@ export function App() {
                           )}
                         </div>
 
-                        <div>
-                          <div
-                              className="card-tag-bar"
-                              onClick={(e) => e.stopPropagation()}
-                          >
-                            {noteTags.map((tag) => {
-                              const active = currentItem.customTags?.includes(tag) ?? false;
-                              return (
-                                  <button
-                                      key={tag}
-                                      type="button"
-                                      className={`helper-chip ${active ? 'active' : ''}`}
-                                      onClick={() => handleToggleItemCustomTag(currentItem.id, tag)}
-                                  >
-                                    #{tag}
-                                  </button>
-                              );
-                            })}
-                          </div>
-                          <div className="flip-hint">
-                            <RotateCcw size={13} />
-                            {!isFlipped
-                                ? '카드를 터치해 품사별 뜻 · 반의어 · 예문/해석 보기'
-                                : '보통/쉬움 선택 시 연승 타워가 1칸 올라갑니다'}
-                          </div>
+                        <div className="flip-hint">
+                          <RotateCcw size={13} />
+                          {!isFlipped
+                              ? '카드를 터치해 품사별 뜻 · 반의어 · 예문/해석 보기'
+                              : '쉬움(승) 선택 시 연승 타워가 1칸 올라갑니다'}
                         </div>
                       </div>
 
@@ -1607,11 +1482,6 @@ export function App() {
                         <FolderOpen size={11} />
                         {normalizeCategory(currentItem.tag)}
                       </span>
-                            {currentItem.customTags?.map((t) => (
-                                <span key={t} className="note-tag-badge">
-                          #{t}
-                        </span>
-                            ))}
                           </div>
                           <button
                               type="button"
@@ -1678,7 +1548,7 @@ export function App() {
                                   {spellingResult === 'correct' ? (
                                       <>
                                         <Check size={18} />
-                                        정답입니다! (+1 연승)
+                                        정답입니다! (아래에서 쉬움 선택 시 +1 연승)
                                       </>
                                   ) : (
                                       <>
@@ -1696,22 +1566,6 @@ export function App() {
                                 )}
                               </div>
                           )}
-                        </div>
-
-                        <div className="card-tag-bar">
-                          {noteTags.map((tag) => {
-                            const active = currentItem.customTags?.includes(tag) ?? false;
-                            return (
-                                <button
-                                    key={tag}
-                                    type="button"
-                                    className={`helper-chip ${active ? 'active' : ''}`}
-                                    onClick={() => handleToggleItemCustomTag(currentItem.id, tag)}
-                                >
-                                  #{tag}
-                                </button>
-                            );
-                          })}
                         </div>
                       </div>
 
@@ -1735,7 +1589,7 @@ export function App() {
                     </>
                 )}
 
-                {/* 4번째 이미지 스타일: 50 STREAK TOWER */}
+                {/* 50 STREAK TOWER */}
                 <div className="streak-tower-card">
                   <div className="tower-header">
                     <h3 className="tower-title">🏰 50 STREAK TOWER 🏰</h3>
@@ -2158,11 +2012,6 @@ export function App() {
                                     <span className="word-row-phonetic">{item.phonetic}</span>
                                 )}
                                 <span className="cat-badge">{normalizeCategory(item.tag)}</span>
-                                {item.customTags?.map((t) => (
-                                    <span key={t} className="note-tag-badge">
-                            #{t}
-                          </span>
-                                ))}
                               </div>
                               <div className="word-row-meaning">{item.meaning}</div>
                               {item.example && (
