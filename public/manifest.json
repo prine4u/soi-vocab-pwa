@@ -1,0 +1,16 @@
+{
+  "name": "Soi Vocab - 영단어 암기장",
+  "short_name": "Soi Vocab",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#4f46e5",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
