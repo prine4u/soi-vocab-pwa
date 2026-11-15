@@ -5,8 +5,16 @@ export interface VocabItem {
     word: string;
     meaning: string;
     example?: string;
+    tag?: string;
     card: Card;
     createdAt: number;
+}
+
+export interface StudyStats {
+    streak: number;
+    lastStudyDate: string | null;
+    todayDate: string;
+    todayReviewed: number;
 }
 
 export type StudyMode = 'flashcard' | 'spelling';

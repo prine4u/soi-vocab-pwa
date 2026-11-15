@@ -1,4 +1,11 @@
-import { useState, useEffect, useMemo, useRef, type FormEvent } from 'react';
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  type FormEvent,
+  type ChangeEvent,
+} from 'react';
 import { fsrs, Rating, State, type Grade } from 'ts-fsrs';
 import {
   Volume2,
@@ -14,13 +21,23 @@ import {
   HelpCircle,
   Layers,
   Keyboard,
+  Download,
+  Upload,
+  Pencil,
+  Flame,
+  Gauge,
 } from 'lucide-react';
-import type { VocabItem, StudyMode, AppTab } from './types';
+import type { VocabItem, StudyMode, AppTab, StudyStats } from './types';
 import {
   loadVocabItems,
   saveVocabItems,
   createNewVocabItem,
   getSampleItems,
+  loadStudyStats,
+  saveStudyStats,
+  incrementTodayReview,
+  parseImportedVocab,
+  getDateKey,
 } from './utils/storage';
 
 function formatInterval(due: Date, now: Date): string {
@@ -53,9 +70,11 @@ function getStateLabel(state: State): string {
 
 export function App() {
   const [items, setItems] = useState<VocabItem[]>(() => loadVocabItems());
+  const [stats, setStats] = useState<StudyStats>(() => loadStudyStats());
   const [activeTab, setActiveTab] = useState<AppTab>('study');
   const [studyMode, setStudyMode] = useState<StudyMode>('flashcard');
   const [autoSpeak, setAutoSpeak] = useState<boolean>(true);
+  const [speechRate, setSpeechRate] = useState<number>(0.9);
 
   // Flashcard state
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
@@ -74,14 +93,23 @@ export function App() {
   const [bulkText, setBulkText] = useState<string>('');
   const [toastMsg, setToastMsg] = useState<string>('');
 
-  // Word list filter
+  // Word list filter & inline edit
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editWord, setEditWord] = useState<string>('');
+  const [editMeaning, setEditMeaning] = useState<string>('');
+  const [editExample, setEditExample] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const scheduler = useMemo(() => fsrs(), []);
 
   useEffect(() => {
     saveVocabItems(items);
   }, [items]);
+
+  useEffect(() => {
+    saveStudyStats(stats);
+  }, [stats]);
 
   // 오늘 자정(23:59:59)까지 복습 예정인 단어 목록
   const dueItems = useMemo(() => {
@@ -103,16 +131,15 @@ export function App() {
 
   const currentItem = dueItems[0] ?? null;
 
-  const speakWord = (text: string) => {
+  const speakWord = (text: string, customRate?: number) => {
     if (!('speechSynthesis' in window) || !text.trim()) return;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text.trim());
     utterance.lang = 'en-US';
-    utterance.rate = 0.9;
+    utterance.rate = customRate ?? speechRate;
     window.speechSynthesis.speak(utterance);
   };
 
-  // 플래시카드 모드에서 새 카드가 표시될 때 자동 발음
   useEffect(() => {
     if (
         activeTab === 'study' &&
@@ -125,7 +152,6 @@ export function App() {
     }
   }, [activeTab, studyMode, autoSpeak, currentItem?.id, isFlipped]);
 
-  // 스펠링 모드 전환 시 입력창 자동 포커스
   useEffect(() => {
     if (activeTab === 'study' && studyMode === 'spelling' && currentItem && !spellingResult) {
       spellingInputRef.current?.focus();
@@ -136,7 +162,7 @@ export function App() {
     setToastMsg(msg);
     setTimeout(() => {
       setToastMsg('');
-    }, 2500);
+    }, 2800);
   };
 
   const resetCardInteraction = () => {
@@ -156,6 +182,7 @@ export function App() {
             item.id === currentItem.id ? { ...item, card: record.card } : item
         )
     );
+    setStats((prev) => incrementTodayReview(prev));
     resetCardInteraction();
   };
 
@@ -218,6 +245,32 @@ export function App() {
 
   const handleDeleteItem = (id: string) => {
     setItems((prev) => prev.filter((item) => item.id !== id));
+    if (editingId === id) setEditingId(null);
+  };
+
+  const startEditing = (item: VocabItem) => {
+    setEditingId(item.id);
+    setEditWord(item.word);
+    setEditMeaning(item.meaning);
+    setEditExample(item.example ?? '');
+  };
+
+  const saveEditing = (id: string) => {
+    if (!editWord.trim() || !editMeaning.trim()) return;
+    setItems((prev) =>
+        prev.map((item) =>
+            item.id === id
+                ? {
+                  ...item,
+                  word: editWord.trim(),
+                  meaning: editMeaning.trim(),
+                  example: editExample.trim() || undefined,
+                }
+                : item
+        )
+    );
+    setEditingId(null);
+    showToast('단어 정보가 수정되었습니다.');
   };
 
   const handleLoadSamples = () => {
@@ -231,6 +284,50 @@ export function App() {
     }
     setItems((prev) => [...freshSamples, ...prev]);
     showToast(`샘플 단어 ${freshSamples.length}개를 추가했습니다.`);
+  };
+
+  const handleExportJson = () => {
+    const payload = {
+      app: 'Soi Vocab',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      items,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `soi-vocab-backup-${getDateKey()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('단어장 백업 파일(JSON)을 저장했습니다.');
+  };
+
+  const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const imported = parseImportedVocab(text);
+      if (imported.length === 0) {
+        showToast('불러올 수 있는 유효한 단어가 없습니다.');
+        return;
+      }
+
+      setItems((prev) => {
+        const map = new Map<string, VocabItem>();
+        prev.forEach((item) => map.set(item.word.toLowerCase(), item));
+        imported.forEach((item) => map.set(item.word.toLowerCase(), item));
+        return Array.from(map.values());
+      });
+      showToast(`${imported.length}개의 단어를 불러왔습니다.`);
+    } catch {
+      showToast('백업 파일을 읽는 중 오류가 발생했습니다.');
+    } finally {
+      e.target.value = '';
+    }
   };
 
   const filteredList = useMemo(() => {
@@ -285,6 +382,12 @@ export function App() {
     return `${clean[0]} ${'_ '.repeat(clean.length - 1).trim()} (${clean.length}글자)`;
   };
 
+  const totalTodayTarget = stats.todayReviewed + dueItems.length;
+  const progressPercent =
+      totalTodayTarget === 0
+          ? 100
+          : Math.min(100, Math.round((stats.todayReviewed / totalTodayTarget) * 100));
+
   return (
       <div className="app-shell">
         <header className="app-header">
@@ -292,11 +395,27 @@ export function App() {
             <h1 className="app-title">Soi Vocab</h1>
             <p className="app-subtitle">전체 {items.length}단어 · FSRS 망각곡선 복습</p>
           </div>
-          <div className="due-pill">오늘 복습 {dueItems.length}개</div>
+          <div className="header-badges">
+            <div className="streak-pill" title="연속 학습일">
+              <Flame size={14} />
+              {stats.streak}일째
+            </div>
+            <div className="due-pill">남은 복습 {dueItems.length}</div>
+          </div>
         </header>
 
         {activeTab === 'study' && (
             <>
+              <div className="progress-wrap">
+                <div className="progress-top">
+                  <span>오늘 학습 진행률 ({stats.todayReviewed}회 완료)</span>
+                  <span>{progressPercent}%</span>
+                </div>
+                <div className="progress-track">
+                  <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
+                </div>
+              </div>
+
               <div className="toolbar">
                 <div className="mode-switch">
                   <button
@@ -323,14 +442,30 @@ export function App() {
                   </button>
                 </div>
 
-                <button
-                    type="button"
-                    className={`auto-audio-btn ${autoSpeak ? 'on' : ''}`}
-                    onClick={() => setAutoSpeak((prev) => !prev)}
-                >
-                  <Volume2 size={14} />
-                  자동발음 {autoSpeak ? 'ON' : 'OFF'}
-                </button>
+                <div className="toolbar-actions">
+                  <button
+                      type="button"
+                      className={`auto-audio-btn ${speechRate < 0.8 ? 'on' : ''}`}
+                      onClick={() => {
+                        const nextRate = speechRate === 0.9 ? 0.65 : 0.9;
+                        setSpeechRate(nextRate);
+                        if (currentItem) speakWord(currentItem.word, nextRate);
+                      }}
+                      title="발음 속도 전환"
+                  >
+                    <Gauge size={14} />
+                    {speechRate === 0.9 ? '0.9x' : '0.65x'}
+                  </button>
+
+                  <button
+                      type="button"
+                      className={`auto-audio-btn ${autoSpeak ? 'on' : ''}`}
+                      onClick={() => setAutoSpeak((prev) => !prev)}
+                  >
+                    <Volume2 size={14} />
+                    {autoSpeak ? '자동' : '수동'}
+                  </button>
+                </div>
               </div>
 
               {!currentItem ? (
@@ -340,7 +475,7 @@ export function App() {
                     </div>
                     <h2 className="done-title">오늘 복습할 단어를 모두 마쳤어요!</h2>
                     <p className="done-desc">
-                      망각곡선 일정에 맞춰 다음 복습 날짜가 자동 예약되었습니다.
+                      오늘 총 <strong>{stats.todayReviewed}회</strong> 복습을 완료했습니다.
                       <br />새 단어를 추가해 계속 학습해 보세요.
                     </p>
                     <button
@@ -654,6 +789,28 @@ export function App() {
                 </button>
               </div>
 
+              <div className="backup-bar">
+                <button type="button" className="backup-btn" onClick={handleExportJson}>
+                  <Download size={15} />
+                  백업 내보내기 (JSON)
+                </button>
+                <button
+                    type="button"
+                    className="backup-btn"
+                    onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload size={15} />
+                  백업 불러오기
+                </button>
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json,application/json"
+                    style={{ display: 'none' }}
+                    onChange={handleImportFile}
+                />
+              </div>
+
               {toastMsg && <div className="toast-banner">{toastMsg}</div>}
 
               <div className="search-box">
@@ -675,35 +832,90 @@ export function App() {
                 ) : (
                     filteredList.map((item) => (
                         <div key={item.id} className="word-row">
-                          <div className="word-row-main">
-                            <div className="word-row-title">{item.word}</div>
-                            <div className="word-row-meaning">{item.meaning}</div>
-                            <div className="word-row-meta">
-                              {getStateLabel(item.card.state)} · 다음 복습:{' '}
-                              {item.card.due.toLocaleDateString('ko-KR', {
-                                month: 'short',
-                                day: 'numeric',
-                              })}
-                            </div>
-                          </div>
-                          <div className="row-actions">
-                            <button
-                                type="button"
-                                className="mini-icon-btn"
-                                aria-label="발음 듣기"
-                                onClick={() => speakWord(item.word)}
-                            >
-                              <Volume2 size={16} />
-                            </button>
-                            <button
-                                type="button"
-                                className="mini-icon-btn danger"
-                                aria-label="단어 삭제"
-                                onClick={() => handleDeleteItem(item.id)}
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
+                          {editingId === item.id ? (
+                              <div className="edit-box">
+                                <input
+                                    type="text"
+                                    className="text-input"
+                                    value={editWord}
+                                    onChange={(e) => setEditWord(e.target.value)}
+                                    placeholder="영어 단어"
+                                    autoCapitalize="none"
+                                    autoCorrect="off"
+                                />
+                                <input
+                                    type="text"
+                                    className="text-input"
+                                    value={editMeaning}
+                                    onChange={(e) => setEditMeaning(e.target.value)}
+                                    placeholder="한국어 뜻"
+                                />
+                                <input
+                                    type="text"
+                                    className="text-input"
+                                    value={editExample}
+                                    onChange={(e) => setEditExample(e.target.value)}
+                                    placeholder="예문 (선택)"
+                                />
+                                <div className="edit-actions">
+                                  <button
+                                      type="button"
+                                      className="secondary-btn"
+                                      onClick={() => setEditingId(null)}
+                                  >
+                                    취소
+                                  </button>
+                                  <button
+                                      type="button"
+                                      className="submit-btn"
+                                      style={{ padding: '8px 14px' }}
+                                      onClick={() => saveEditing(item.id)}
+                                  >
+                                    저장
+                                  </button>
+                                </div>
+                              </div>
+                          ) : (
+                              <>
+                                <div className="word-row-main">
+                                  <div className="word-row-title">{item.word}</div>
+                                  <div className="word-row-meaning">{item.meaning}</div>
+                                  <div className="word-row-meta">
+                                    {getStateLabel(item.card.state)} · 다음 복습:{' '}
+                                    {item.card.due.toLocaleDateString('ko-KR', {
+                                      month: 'short',
+                                      day: 'numeric',
+                                    })}
+                                  </div>
+                                </div>
+                                <div className="row-actions">
+                                  <button
+                                      type="button"
+                                      className="mini-icon-btn"
+                                      aria-label="발음 듣기"
+                                      onClick={() => speakWord(item.word)}
+                                  >
+                                    <Volume2 size={16} />
+                                  </button>
+                                  <button
+                                      type="button"
+                                      className="mini-icon-btn"
+                                      aria-label="단어 수정"
+                                      onClick={() => startEditing(item)}
+                                  >
+                                    <Pencil size={15} />
+                                  </button>
+                                  <button
+                                      type="button"
+                                      className="mini-icon-btn danger"
+                                      aria-label="단어 삭제"
+                                      onClick={() => handleDeleteItem(item.id)}
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
+                              </>
+                          )}
                         </div>
                     ))
                 )}
