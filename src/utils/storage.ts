@@ -3,6 +3,9 @@ import type { VocabItem, StudyStats } from '../types';
 
 const STORAGE_KEY = 'soi_vocab_items_v1';
 const STATS_KEY = 'soi_vocab_stats_v1';
+const CATEGORIES_KEY = 'soi_vocab_categories_v1';
+
+export const DEFAULT_CATEGORY = '기본 학습장';
 
 const INITIAL_SAMPLES: Array<{ word: string; meaning: string; example?: string }> = [
     { word: 'adventure', meaning: '모험', example: 'Reading books is a great adventure.' },
@@ -24,6 +27,11 @@ export function getDateKey(date: Date = new Date()): string {
     return `${y}-${m}-${d}`;
 }
 
+export function normalizeCategory(tag?: string): string {
+    const trimmed = tag?.trim();
+    return trimmed && trimmed.length > 0 ? trimmed : DEFAULT_CATEGORY;
+}
+
 export function createNewVocabItem(
     word: string,
     meaning: string,
@@ -36,7 +44,7 @@ export function createNewVocabItem(
         word: word.trim(),
         meaning: meaning.trim(),
         example: example?.trim() || undefined,
-        tag: tag?.trim() || undefined,
+        tag: normalizeCategory(tag),
         card: createEmptyCard(now),
         createdAt: now.getTime(),
     };
@@ -58,7 +66,13 @@ export function loadVocabItems(): VocabItem[] {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) {
             const seeded = INITIAL_SAMPLES.map((item, idx) =>
-                createNewVocabItem(item.word, item.meaning, item.example, new Date(Date.now() + idx))
+                createNewVocabItem(
+                    item.word,
+                    item.meaning,
+                    item.example,
+                    new Date(Date.now() + idx),
+                    DEFAULT_CATEGORY
+                )
             );
             saveVocabItems(seeded);
             return seeded;
@@ -67,6 +81,7 @@ export function loadVocabItems(): VocabItem[] {
         if (!Array.isArray(parsed)) return [];
         return parsed.map((item) => ({
             ...item,
+            tag: normalizeCategory(item.tag),
             card: hydrateCard(item.card),
         }));
     } catch {
@@ -78,10 +93,40 @@ export function saveVocabItems(items: VocabItem[]): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 
+export function loadCustomCategories(): string[] {
+    try {
+        const raw = localStorage.getItem(CATEGORIES_KEY);
+        if (!raw) return [DEFAULT_CATEGORY];
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) return [DEFAULT_CATEGORY];
+        const set = new Set<string>([DEFAULT_CATEGORY]);
+        parsed.forEach((c) => {
+            if (typeof c === 'string' && c.trim()) set.add(c.trim());
+        });
+        return Array.from(set);
+    } catch {
+        return [DEFAULT_CATEGORY];
+    }
+}
+
+export function saveCustomCategories(categories: string[]): void {
+    const set = new Set<string>([DEFAULT_CATEGORY]);
+    categories.forEach((c) => {
+        if (c.trim()) set.add(c.trim());
+    });
+    localStorage.setItem(CATEGORIES_KEY, JSON.stringify(Array.from(set)));
+}
+
 export function getSampleItems(): VocabItem[] {
     const now = Date.now();
     return INITIAL_SAMPLES.map((item, idx) =>
-        createNewVocabItem(item.word, item.meaning, item.example, new Date(now + idx))
+        createNewVocabItem(
+            item.word,
+            item.meaning,
+            item.example,
+            new Date(now + idx),
+            DEFAULT_CATEGORY
+        )
     );
 }
 
@@ -159,11 +204,15 @@ export function parseImportedVocab(jsonText: string): VocabItem[] {
         if (!word || !meaning) return;
 
         result.push({
-            id: typeof obj.id === 'string' && obj.id ? obj.id : `${now}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+            id:
+                typeof obj.id === 'string' && obj.id
+                    ? obj.id
+                    : `${now}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
             word,
             meaning,
-            example: typeof obj.example === 'string' && obj.example.trim() ? obj.example.trim() : undefined,
-            tag: typeof obj.tag === 'string' && obj.tag.trim() ? obj.tag.trim() : undefined,
+            example:
+                typeof obj.example === 'string' && obj.example.trim() ? obj.example.trim() : undefined,
+            tag: normalizeCategory(typeof obj.tag === 'string' ? obj.tag : undefined),
             card: hydrateCard(obj.card),
             createdAt: typeof obj.createdAt === 'number' ? obj.createdAt : now + idx,
         });

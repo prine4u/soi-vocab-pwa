@@ -26,8 +26,20 @@ import {
   Pencil,
   Flame,
   Gauge,
+  Camera,
+  FolderOpen,
+  KeyRound,
+  Loader2,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
-import type { VocabItem, StudyMode, AppTab, StudyStats } from './types';
+import type {
+  VocabItem,
+  StudyMode,
+  AppTab,
+  StudyStats,
+  ExtractedVocabDraft,
+} from './types';
 import {
   loadVocabItems,
   saveVocabItems,
@@ -38,7 +50,17 @@ import {
   incrementTodayReview,
   parseImportedVocab,
   getDateKey,
+  DEFAULT_CATEGORY,
+  normalizeCategory,
+  loadCustomCategories,
+  saveCustomCategories,
 } from './utils/storage';
+import {
+  loadGeminiApiKey,
+  saveGeminiApiKey,
+  resizeImageToBase64,
+  extractVocabFromImage,
+} from './utils/ocr';
 
 function formatInterval(due: Date, now: Date): string {
   const diffMs = Math.max(0, due.getTime() - now.getTime());
@@ -70,11 +92,21 @@ function getStateLabel(state: State): string {
 
 export function App() {
   const [items, setItems] = useState<VocabItem[]>(() => loadVocabItems());
+  const [customCategories, setCustomCategories] = useState<string[]>(() =>
+      loadCustomCategories()
+  );
   const [stats, setStats] = useState<StudyStats>(() => loadStudyStats());
   const [activeTab, setActiveTab] = useState<AppTab>('study');
   const [studyMode, setStudyMode] = useState<StudyMode>('flashcard');
   const [autoSpeak, setAutoSpeak] = useState<boolean>(true);
   const [speechRate, setSpeechRate] = useState<number>(0.9);
+
+  // Category filters
+  const [studyCategory, setStudyCategory] = useState<string>('ALL');
+  const [listCategory, setListCategory] = useState<string>('ALL');
+  const [targetCategory, setTargetCategory] = useState<string>(DEFAULT_CATEGORY);
+  const [isCreatingCategory, setIsCreatingCategory] = useState<boolean>(false);
+  const [newCategoryName, setNewCategoryName] = useState<string>('');
 
   // Flashcard state
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
@@ -86,12 +118,24 @@ export function App() {
   const spellingInputRef = useRef<HTMLInputElement | null>(null);
 
   // Add word state
-  const [addSubTab, setAddSubTab] = useState<'single' | 'bulk'>('single');
+  const [addSubTab, setAddSubTab] = useState<'camera' | 'single' | 'bulk'>('camera');
   const [newWord, setNewWord] = useState<string>('');
   const [newMeaning, setNewMeaning] = useState<string>('');
   const [newExample, setNewExample] = useState<string>('');
   const [bulkText, setBulkText] = useState<string>('');
   const [toastMsg, setToastMsg] = useState<string>('');
+
+  // Camera / OCR state
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(() => loadGeminiApiKey());
+  const [apiKeyInput, setApiKeyInput] = useState<string>(() => loadGeminiApiKey());
+  const [showApiKeyEditor, setShowApiKeyEditor] = useState<boolean>(
+      () => !loadGeminiApiKey()
+  );
+  const [ocrPreviewUrl, setOcrPreviewUrl] = useState<string>('');
+  const [isExtracting, setIsExtracting] = useState<boolean>(false);
+  const [ocrError, setOcrError] = useState<string>('');
+  const [extractedDrafts, setExtractedDrafts] = useState<ExtractedVocabDraft[]>([]);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
   // Word list filter & inline edit
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -99,6 +143,7 @@ export function App() {
   const [editWord, setEditWord] = useState<string>('');
   const [editMeaning, setEditMeaning] = useState<string>('');
   const [editExample, setEditExample] = useState<string>('');
+  const [editTag, setEditTag] = useState<string>(DEFAULT_CATEGORY);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const scheduler = useMemo(() => fsrs(), []);
@@ -108,11 +153,24 @@ export function App() {
   }, [items]);
 
   useEffect(() => {
+    saveCustomCategories(customCategories);
+  }, [customCategories]);
+
+  useEffect(() => {
     saveStudyStats(stats);
   }, [stats]);
 
-  // 오늘 자정(23:59:59)까지 복습 예정인 단어 목록
-  const dueItems = useMemo(() => {
+  // 전체 학습장 목록 (저장된 목록 + 단어에 부여된 태그 통합)
+  const allCategories = useMemo(() => {
+    const set = new Set<string>([DEFAULT_CATEGORY, ...customCategories]);
+    items.forEach((item) => {
+      set.add(normalizeCategory(item.tag));
+    });
+    return Array.from(set);
+  }, [customCategories, items]);
+
+  // 오늘 자정(23:59:59)까지 복습 예정인 전체 단어 목록
+  const allDueItems = useMemo(() => {
     const now = new Date();
     const endOfToday = new Date(
         now.getFullYear(),
@@ -128,6 +186,24 @@ export function App() {
         .filter((item) => item.card.due.getTime() <= endOfToday)
         .sort((a, b) => a.card.due.getTime() - b.card.due.getTime());
   }, [items]);
+
+  // 선택된 학습장 기준 복습 대상
+  const dueItems = useMemo(() => {
+    if (studyCategory === 'ALL') return allDueItems;
+    return allDueItems.filter(
+        (item) => normalizeCategory(item.tag) === studyCategory
+    );
+  }, [allDueItems, studyCategory]);
+
+  // 학습장별 남은 복습 개수 맵
+  const dueCountByCategory = useMemo(() => {
+    const map = new Map<string, number>();
+    allDueItems.forEach((item) => {
+      const cat = normalizeCategory(item.tag);
+      map.set(cat, (map.get(cat) || 0) + 1);
+    });
+    return map;
+  }, [allDueItems]);
 
   const currentItem = dueItems[0] ?? null;
 
@@ -162,7 +238,7 @@ export function App() {
     setToastMsg(msg);
     setTimeout(() => {
       setToastMsg('');
-    }, 2800);
+    }, 3000);
   };
 
   const resetCardInteraction = () => {
@@ -170,6 +246,16 @@ export function App() {
     setTypedAnswer('');
     setSpellingResult(null);
     setShowHint(false);
+  };
+
+  const handleCreateCategory = () => {
+    const cleaned = newCategoryName.trim();
+    if (!cleaned) return;
+    setCustomCategories((prev) => Array.from(new Set([...prev, cleaned])));
+    setTargetCategory(cleaned);
+    setNewCategoryName('');
+    setIsCreatingCategory(false);
+    showToast(`"${cleaned}" 학습장이 생성되었습니다.`);
   };
 
   const handleRate = (grade: Grade) => {
@@ -198,16 +284,105 @@ export function App() {
     speakWord(currentItem.word);
   };
 
+  const handleSaveApiKey = () => {
+    saveGeminiApiKey(apiKeyInput);
+    const saved = loadGeminiApiKey();
+    setGeminiApiKey(saved);
+    if (saved) {
+      setShowApiKeyEditor(false);
+      showToast('Gemini API 키가 저장되었습니다.');
+    } else {
+      showToast('API 키가 삭제되었습니다.');
+    }
+  };
+
+  const handlePhotoSelected = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    setOcrError('');
+    setExtractedDrafts([]);
+    setIsExtracting(true);
+
+    try {
+      const { base64, mimeType, previewUrl } = await resizeImageToBase64(file, 1280);
+      setOcrPreviewUrl(previewUrl);
+
+      const extracted = await extractVocabFromImage(base64, mimeType, geminiApiKey);
+      if (extracted.length === 0) {
+        setOcrError('사진에서 영어 단어를 찾지 못했습니다. 글자가 선명하게 나오도록 다시 찍어보세요.');
+      } else {
+        const now = Date.now();
+        setExtractedDrafts(
+            extracted.map((item, idx) => ({
+              id: `draft-${now}-${idx}`,
+              word: item.word,
+              meaning: item.meaning,
+              example: item.example || '',
+              selected: true,
+            }))
+        );
+      }
+    } catch (err) {
+      setOcrError(err instanceof Error ? err.message : '사진 분석 중 오류가 발생했습니다.');
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
+  const handleUpdateDraft = (
+      id: string,
+      field: 'word' | 'meaning' | 'example' | 'selected',
+      value: string | boolean
+  ) => {
+    setExtractedDrafts((prev) =>
+        prev.map((draft) => (draft.id === id ? { ...draft, [field]: value } : draft))
+    );
+  };
+
+  const handleSaveExtractedDrafts = () => {
+    const selectedItems = extractedDrafts.filter(
+        (d) => d.selected && d.word.trim() && d.meaning.trim()
+    );
+    if (selectedItems.length === 0) {
+      showToast('저장할 단어를 1개 이상 선택해 주세요.');
+      return;
+    }
+
+    const now = Date.now();
+    const created = selectedItems.map((draft, idx) =>
+        createNewVocabItem(
+            draft.word,
+            draft.meaning,
+            draft.example,
+            new Date(now + idx),
+            targetCategory
+        )
+    );
+
+    setItems((prev) => [...created, ...prev]);
+    setExtractedDrafts([]);
+    setOcrPreviewUrl('');
+    showToast(`[${targetCategory}]에 ${created.length}개 단어가 저장되었습니다.`);
+  };
+
   const handleAddSingle = (e: FormEvent) => {
     e.preventDefault();
     if (!newWord.trim() || !newMeaning.trim()) return;
 
-    const created = createNewVocabItem(newWord, newMeaning, newExample);
+    const created = createNewVocabItem(
+        newWord,
+        newMeaning,
+        newExample,
+        new Date(),
+        targetCategory
+    );
     setItems((prev) => [created, ...prev]);
     setNewWord('');
     setNewMeaning('');
     setNewExample('');
-    showToast(`"${created.word}" 단어가 추가되었습니다.`);
+    showToast(`[${targetCategory}]에 "${created.word}" 단어가 추가되었습니다.`);
   };
 
   const handleAddBulk = () => {
@@ -228,7 +403,9 @@ export function App() {
         const word = match[1].trim();
         const meaning = match[2].trim();
         if (word && meaning) {
-          added.push(createNewVocabItem(word, meaning, examplePart, new Date(now + idx)));
+          added.push(
+              createNewVocabItem(word, meaning, examplePart, new Date(now + idx), targetCategory)
+          );
         }
       }
     });
@@ -240,7 +417,7 @@ export function App() {
 
     setItems((prev) => [...added, ...prev]);
     setBulkText('');
-    showToast(`${added.length}개의 단어가 한 번에 추가되었습니다.`);
+    showToast(`[${targetCategory}]에 ${added.length}개 단어가 등록되었습니다.`);
   };
 
   const handleDeleteItem = (id: string) => {
@@ -253,6 +430,7 @@ export function App() {
     setEditWord(item.word);
     setEditMeaning(item.meaning);
     setEditExample(item.example ?? '');
+    setEditTag(normalizeCategory(item.tag));
   };
 
   const saveEditing = (id: string) => {
@@ -265,6 +443,7 @@ export function App() {
                   word: editWord.trim(),
                   meaning: editMeaning.trim(),
                   example: editExample.trim() || undefined,
+                  tag: normalizeCategory(editTag),
                 }
                 : item
         )
@@ -289,8 +468,9 @@ export function App() {
   const handleExportJson = () => {
     const payload = {
       app: 'Soi Vocab',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
+      categories: allCategories,
       items,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -332,12 +512,16 @@ export function App() {
 
   const filteredList = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
-        (item) =>
-            item.word.toLowerCase().includes(q) || item.meaning.toLowerCase().includes(q)
-    );
-  }, [items, searchQuery]);
+    return items.filter((item) => {
+      const matchCategory =
+          listCategory === 'ALL' || normalizeCategory(item.tag) === listCategory;
+      if (!matchCategory) return false;
+      if (!q) return true;
+      return (
+          item.word.toLowerCase().includes(q) || item.meaning.toLowerCase().includes(q)
+      );
+    });
+  }, [items, searchQuery, listCategory]);
 
   const now = new Date();
   const scheduling = currentItem ? scheduler.repeat(currentItem.card, now) : null;
@@ -382,11 +566,13 @@ export function App() {
     return `${clean[0]} ${'_ '.repeat(clean.length - 1).trim()} (${clean.length}글자)`;
   };
 
-  const totalTodayTarget = stats.todayReviewed + dueItems.length;
+  const totalTodayTarget = stats.todayReviewed + allDueItems.length;
   const progressPercent =
       totalTodayTarget === 0
           ? 100
           : Math.min(100, Math.round((stats.todayReviewed / totalTodayTarget) * 100));
+
+  const selectedDraftCount = extractedDrafts.filter((d) => d.selected).length;
 
   return (
       <div className="app-shell">
@@ -406,9 +592,38 @@ export function App() {
 
         {activeTab === 'study' && (
             <>
+              <div className="category-strip">
+                <button
+                    type="button"
+                    className={`cat-chip ${studyCategory === 'ALL' ? 'active' : ''}`}
+                    onClick={() => {
+                      setStudyCategory('ALL');
+                      resetCardInteraction();
+                    }}
+                >
+                  전체 ({allDueItems.length})
+                </button>
+                {allCategories.map((cat) => {
+                  const count = dueCountByCategory.get(cat) || 0;
+                  return (
+                      <button
+                          key={cat}
+                          type="button"
+                          className={`cat-chip ${studyCategory === cat ? 'active' : ''}`}
+                          onClick={() => {
+                            setStudyCategory(cat);
+                            resetCardInteraction();
+                          }}
+                      >
+                        {cat} ({count})
+                      </button>
+                  );
+                })}
+              </div>
+
               <div className="progress-wrap">
                 <div className="progress-top">
-                  <span>오늘 학습 진행률 ({stats.todayReviewed}회 완료)</span>
+                  <span>오늘 전체 진행률 ({stats.todayReviewed}회 완료)</span>
                   <span>{progressPercent}%</span>
                 </div>
                 <div className="progress-track">
@@ -473,18 +688,36 @@ export function App() {
                     <div className="done-icon">
                       <Sparkles size={26} />
                     </div>
-                    <h2 className="done-title">오늘 복습할 단어를 모두 마쳤어요!</h2>
+                    <h2 className="done-title">
+                      {studyCategory === 'ALL'
+                          ? '오늘 복습할 단어를 모두 마쳤어요!'
+                          : `[${studyCategory}] 복습을 모두 마쳤어요!`}
+                    </h2>
                     <p className="done-desc">
                       오늘 총 <strong>{stats.todayReviewed}회</strong> 복습을 완료했습니다.
-                      <br />새 단어를 추가해 계속 학습해 보세요.
+                      <br />
+                      {studyCategory !== 'ALL' && allDueItems.length > 0
+                          ? `다른 학습장에 ${allDueItems.length}개의 복습 단어가 남아 있습니다.`
+                          : '사진을 찍거나 새 단어를 추가해 계속 학습해 보세요.'}
                     </p>
-                    <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={() => setActiveTab('add')}
-                    >
-                      + 새 단어 추가하기
-                    </button>
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: 8 }}>
+                      {studyCategory !== 'ALL' && allDueItems.length > 0 && (
+                          <button
+                              type="button"
+                              className="secondary-btn"
+                              onClick={() => setStudyCategory('ALL')}
+                          >
+                            전체 학습장 보기
+                          </button>
+                      )}
+                      <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => setActiveTab('add')}
+                      >
+                        + 단어 추가하기
+                      </button>
+                    </div>
                   </div>
               ) : studyMode === 'flashcard' ? (
                   <>
@@ -493,9 +726,15 @@ export function App() {
                         onClick={() => setIsFlipped((prev) => !prev)}
                     >
                       <div className="card-top-row">
-                  <span className="badge-state">
-                    {getStateLabel(currentItem.card.state)}
-                  </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="badge-state">
+                      {getStateLabel(currentItem.card.state)}
+                    </span>
+                          <span className="cat-badge">
+                      <FolderOpen size={11} />
+                            {normalizeCategory(currentItem.tag)}
+                    </span>
+                        </div>
                         <button
                             type="button"
                             className="icon-circle-btn"
@@ -554,9 +793,15 @@ export function App() {
                   <>
                     <div className="study-card">
                       <div className="card-top-row">
-                  <span className="badge-state">
-                    {getStateLabel(currentItem.card.state)}
-                  </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="badge-state">
+                      {getStateLabel(currentItem.card.state)}
+                    </span>
+                          <span className="cat-badge">
+                      <FolderOpen size={11} />
+                            {normalizeCategory(currentItem.tag)}
+                    </span>
+                        </div>
                         <button
                             type="button"
                             className="icon-circle-btn"
@@ -633,7 +878,8 @@ export function App() {
                               <div className="answer-compare">
                                 {spellingResult === 'wrong' && (
                                     <div>
-                                      입력한 답: <span style={{ textDecoration: 'line-through' }}>{typedAnswer}</span>
+                                      입력한 답:{' '}
+                                      <span style={{ textDecoration: 'line-through' }}>{typedAnswer}</span>
                                     </div>
                                 )}
                                 <div>
@@ -690,13 +936,70 @@ export function App() {
 
         {activeTab === 'add' && (
             <div className="panel-card">
-              <div className="sub-tabs">
+              {/* 저장할 학습장(카테고리) 선택 및 새 학습장 만들기 */}
+              <div className="category-select-box">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span className="field-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <FolderOpen size={14} />
+                저장할 학습장 분류
+              </span>
+                  <button
+                      type="button"
+                      className="helper-chip"
+                      style={{ padding: '4px 9px', fontSize: '0.74rem' }}
+                      onClick={() => setIsCreatingCategory((prev) => !prev)}
+                  >
+                    {isCreatingCategory ? '취소' : '+ 새 학습장'}
+                  </button>
+                </div>
+
+                {isCreatingCategory ? (
+                    <div className="category-select-row">
+                      <input
+                          type="text"
+                          className="mini-input"
+                          placeholder="예: 학교 3단원, 학원 숙제..."
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                      />
+                      <button
+                          type="button"
+                          className="submit-btn"
+                          style={{ padding: '0 14px', fontSize: '0.84rem' }}
+                          onClick={handleCreateCategory}
+                      >
+                        생성
+                      </button>
+                    </div>
+                ) : (
+                    <select
+                        className="select-input"
+                        value={targetCategory}
+                        onChange={(e) => setTargetCategory(e.target.value)}
+                    >
+                      {allCategories.map((cat) => (
+                          <option key={cat} value={cat}>
+                            {cat}
+                          </option>
+                      ))}
+                    </select>
+                )}
+              </div>
+
+              <div className="sub-tabs-3">
+                <button
+                    type="button"
+                    className={`sub-tab-btn ${addSubTab === 'camera' ? 'active' : ''}`}
+                    onClick={() => setAddSubTab('camera')}
+                >
+                  사진 스캔
+                </button>
                 <button
                     type="button"
                     className={`sub-tab-btn ${addSubTab === 'single' ? 'active' : ''}`}
                     onClick={() => setAddSubTab('single')}
                 >
-                  1개씩 직접 추가
+                  1개씩 추가
                 </button>
                 <button
                     type="button"
@@ -709,8 +1012,182 @@ export function App() {
 
               {toastMsg && <div className="toast-banner">{toastMsg}</div>}
 
-              {addSubTab === 'single' ? (
-                  <form onSubmit={handleAddSingle} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {addSubTab === 'camera' && (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: 600 }}>
+                  {geminiApiKey ? 'Gemini AI 연결됨' : 'AI 사진 인식을 위해 API 키가 필요합니다'}
+                </span>
+                      <button
+                          type="button"
+                          className="helper-chip"
+                          style={{ padding: '4px 9px', fontSize: '0.74rem' }}
+                          onClick={() => setShowApiKeyEditor((prev) => !prev)}
+                      >
+                        <KeyRound size={12} />
+                        {showApiKeyEditor ? '닫기' : 'API 키 설정'}
+                      </button>
+                    </div>
+
+                    {showApiKeyEditor && (
+                        <div className="api-key-box">
+                          <div>
+                            Google AI Studio에서 발급받은 무료 <strong>Gemini API 키</strong>를 입력하면
+                            단어장 사진을 자동으로 인식합니다. (키는 현재 기기에만 저장됩니다)
+                          </div>
+                          <div className="api-key-row">
+                            <input
+                                type="password"
+                                className="mini-input"
+                                placeholder="AIzaSy..."
+                                value={apiKeyInput}
+                                onChange={(e) => setApiKeyInput(e.target.value)}
+                            />
+                            <button
+                                type="button"
+                                className="submit-btn"
+                                style={{ padding: '0 14px', fontSize: '0.82rem' }}
+                                onClick={handleSaveApiKey}
+                            >
+                              저장
+                            </button>
+                          </div>
+                        </div>
+                    )}
+
+                    <input
+                        ref={cameraInputRef}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={handlePhotoSelected}
+                    />
+
+                    <button
+                        type="button"
+                        className="camera-dropzone"
+                        disabled={isExtracting}
+                        onClick={() => {
+                          if (!geminiApiKey) {
+                            setShowApiKeyEditor(true);
+                            setOcrError('먼저 위 입력창에 Gemini API 키를 저장해 주세요.');
+                            return;
+                          }
+                          cameraInputRef.current?.click();
+                        }}
+                    >
+                      <Camera size={28} />
+                      <span>사진 찍기 또는 앨범에서 단어장 선택</span>
+                      <span style={{ fontSize: '0.76rem', fontWeight: 500, opacity: 0.85 }}>
+                  교과서, 프린트, 단어장 페이지를 촬영하면 자동 추출됩니다
+                </span>
+                    </button>
+
+                    {ocrPreviewUrl && (
+                        <div className="ocr-preview-wrap">
+                          <img src={ocrPreviewUrl} alt="스캔 미리보기" className="ocr-preview-img" />
+                        </div>
+                    )}
+
+                    {isExtracting && (
+                        <div className="ocr-loading">
+                          <Loader2 size={18} className="spin" />
+                          AI가 사진에서 영어 단어와 뜻을 추출하고 있습니다...
+                        </div>
+                    )}
+
+                    {ocrError && <div className="ocr-error">{ocrError}</div>}
+
+                    {extractedDrafts.length > 0 && (
+                        <>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <strong style={{ fontSize: '0.88rem' }}>
+                              추출된 단어 ({selectedDraftCount}/{extractedDrafts.length}개 선택)
+                            </strong>
+                            <button
+                                type="button"
+                                className="helper-chip"
+                                style={{ padding: '4px 8px', fontSize: '0.74rem' }}
+                                onClick={() => {
+                                  setExtractedDrafts([]);
+                                  setOcrPreviewUrl('');
+                                }}
+                            >
+                              초기화
+                            </button>
+                          </div>
+
+                          <div className="draft-list">
+                            {extractedDrafts.map((draft) => (
+                                <div
+                                    key={draft.id}
+                                    className={`draft-row ${draft.selected ? '' : 'unselected'}`}
+                                >
+                                  <button
+                                      type="button"
+                                      className="draft-check-btn"
+                                      onClick={() =>
+                                          handleUpdateDraft(draft.id, 'selected', !draft.selected)
+                                      }
+                                  >
+                                    {draft.selected ? <CheckSquare size={19} /> : <Square size={19} />}
+                                  </button>
+                                  <div className="draft-inputs">
+                                    <div className="draft-input-grid">
+                                      <input
+                                          type="text"
+                                          className="mini-input"
+                                          value={draft.word}
+                                          onChange={(e) =>
+                                              handleUpdateDraft(draft.id, 'word', e.target.value)
+                                          }
+                                          placeholder="영어 단어"
+                                          autoCapitalize="none"
+                                          autoCorrect="off"
+                                      />
+                                      <input
+                                          type="text"
+                                          className="mini-input"
+                                          value={draft.meaning}
+                                          onChange={(e) =>
+                                              handleUpdateDraft(draft.id, 'meaning', e.target.value)
+                                          }
+                                          placeholder="한국어 뜻"
+                                      />
+                                    </div>
+                                    {draft.example && (
+                                        <input
+                                            type="text"
+                                            className="mini-input"
+                                            value={draft.example}
+                                            onChange={(e) =>
+                                                handleUpdateDraft(draft.id, 'example', e.target.value)
+                                            }
+                                            placeholder="예문"
+                                        />
+                                    )}
+                                  </div>
+                                </div>
+                            ))}
+                          </div>
+
+                          <button
+                              type="button"
+                              className="primary-full-btn"
+                              onClick={handleSaveExtractedDrafts}
+                          >
+                            선택한 {selectedDraftCount}개를 [{targetCategory}]에 저장하기
+                          </button>
+                        </>
+                    )}
+                  </>
+              )}
+
+              {addSubTab === 'single' && (
+                  <form
+                      onSubmit={handleAddSingle}
+                      style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+                  >
                     <div className="field-group">
                       <label className="field-label">영어 단어 *</label>
                       <input
@@ -750,10 +1227,12 @@ export function App() {
                     </div>
 
                     <button type="submit" className="primary-full-btn">
-                      단어장에 추가하기
+                      [{targetCategory}]에 추가하기
                     </button>
                   </form>
-              ) : (
+              )}
+
+              {addSubTab === 'bulk' && (
                   <>
                     <div className="bulk-guide">
                       한 줄에 한 단어씩 <strong>단어 - 뜻</strong> 또는 <strong>단어 : 뜻</strong> 형식으로
@@ -773,7 +1252,7 @@ export function App() {
                     />
 
                     <button type="button" className="primary-full-btn" onClick={handleAddBulk}>
-                      여러 단어 한 번에 등록하기
+                      [{targetCategory}]에 한 번에 등록하기
                     </button>
                   </>
               )}
@@ -783,10 +1262,33 @@ export function App() {
         {activeTab === 'list' && (
             <div className="panel-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong style={{ fontSize: '0.95rem' }}>등록된 단어 ({items.length}개)</strong>
+                <strong style={{ fontSize: '0.95rem' }}>
+                  단어 목록 ({filteredList.length} / {items.length}개)
+                </strong>
                 <button type="button" className="secondary-btn" onClick={handleLoadSamples}>
                   샘플 10개 채우기
                 </button>
+              </div>
+
+              {/* 학습장별 목록 필터 */}
+              <div className="category-strip">
+                <button
+                    type="button"
+                    className={`cat-chip ${listCategory === 'ALL' ? 'active' : ''}`}
+                    onClick={() => setListCategory('ALL')}
+                >
+                  전체
+                </button>
+                {allCategories.map((cat) => (
+                    <button
+                        key={cat}
+                        type="button"
+                        className={`cat-chip ${listCategory === cat ? 'active' : ''}`}
+                        onClick={() => setListCategory(cat)}
+                    >
+                      {cat}
+                    </button>
+                ))}
               </div>
 
               <div className="backup-bar">
@@ -834,6 +1336,17 @@ export function App() {
                         <div key={item.id} className="word-row">
                           {editingId === item.id ? (
                               <div className="edit-box">
+                                <select
+                                    className="select-input"
+                                    value={editTag}
+                                    onChange={(e) => setEditTag(e.target.value)}
+                                >
+                                  {allCategories.map((cat) => (
+                                      <option key={cat} value={cat}>
+                                        {cat}
+                                      </option>
+                                  ))}
+                                </select>
                                 <input
                                     type="text"
                                     className="text-input"
@@ -878,7 +1391,10 @@ export function App() {
                           ) : (
                               <>
                                 <div className="word-row-main">
-                                  <div className="word-row-title">{item.word}</div>
+                                  <div className="word-row-title">
+                                    <span>{item.word}</span>
+                                    <span className="cat-badge">{normalizeCategory(item.tag)}</span>
+                                  </div>
                                   <div className="word-row-meaning">{item.meaning}</div>
                                   <div className="word-row-meta">
                                     {getStateLabel(item.card.state)} · 다음 복습:{' '}

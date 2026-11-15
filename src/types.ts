@@ -10,6 +10,14 @@ export interface VocabItem {
     createdAt: number;
 }
 
+export interface ExtractedVocabDraft {
+    id: string;
+    word: string;
+    meaning: string;
+    example: string;
+    selected: boolean;
+}
+
 export interface StudyStats {
     streak: number;
     lastStudyDate: string | null;
