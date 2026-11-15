@@ -199,6 +199,7 @@ export function hydrateCard(raw?: Partial<Card>): Card {
     };
 }
 
+// [변경 후: 위 구간을 아래 코드로 교체]
 export function hydrateVocabItems(list: unknown[]): VocabItem[] {
     return list
         .filter((item): item is VocabItem => !!item && typeof item === 'object')
@@ -207,6 +208,7 @@ export function hydrateVocabItems(list: unknown[]): VocabItem[] {
             phonetic: item.phonetic?.trim() || undefined,
             meaning: expandMeaningAbbreviations(item.meaning),
             tag: normalizeCategory(item.tag),
+            starred: Boolean(item.starred),
             itemStats: item.itemStats
                 ? {
                     wins: item.itemStats.wins || 0,

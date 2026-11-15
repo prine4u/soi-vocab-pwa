@@ -5,6 +5,7 @@ import {
   useRef,
   type FormEvent,
   type ChangeEvent,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { fsrs, Rating, State, type Grade } from 'ts-fsrs';
 import {
@@ -43,10 +44,14 @@ import {
   Smartphone,
   ArrowUp,
   ArrowDown,
+  Star,
+  Undo2,
+  Zap,
 } from 'lucide-react';
 import type {
   VocabItem,
   StudyMode,
+  StudyFilter,
   AppTab,
   StudyStats,
   ExtractedVocabDraft,
@@ -72,7 +77,6 @@ import {
   loadLocalUpdatedAt,
   saveLocalUpdatedAt,
 } from './utils/storage';
-
 import {
   loadGeminiApiKey,
   saveGeminiApiKey,
@@ -95,6 +99,14 @@ interface FolderTreeNode {
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+interface UndoSnapshot {
+  items: VocabItem[];
+  stats: StudyStats;
+  isCramMode: boolean;
+  cramQueueIds: string[];
+  wordLabel: string;
 }
 
 const SPEECH_RATES = [0.5, 0.7, 0.8, 0.9, 1.0];
@@ -133,6 +145,14 @@ function isCategoryMatch(itemTag: string | undefined, selectedFolder: string): b
   return norm === selectedFolder || norm.startsWith(`${selectedFolder}/`);
 }
 
+function isWeakItem(item: VocabItem): boolean {
+  return (
+      (item.card.lapses || 0) > 0 ||
+      (item.itemStats?.losses || 0) >= 2 ||
+      item.card.state === State.Relearning
+  );
+}
+
 function resolveItemFolder(targetInput: string, detectedUnit?: string): string {
   const raw = targetInput.trim();
   const unitClean = detectedUnit ? formatFolderSegment(detectedUnit) : '';
@@ -167,6 +187,7 @@ export function App() {
   const [stats, setStats] = useState<StudyStats>(() => loadStudyStats());
   const [activeTab, setActiveTab] = useState<AppTab>('study');
   const [studyMode, setStudyMode] = useState<StudyMode>('flashcard');
+  const [studyFilter, setStudyFilter] = useState<StudyFilter>('all');
   const [autoSpeak, setAutoSpeak] = useState<boolean>(true);
   const [speechRate, setSpeechRate] = useState<number>(() => {
     const saved = Number(localStorage.getItem(SPEECH_RATE_STORAGE_KEY));
@@ -175,6 +196,11 @@ export function App() {
   const speechRateRef = useRef<number>(speechRate);
   const speechTimeoutRef = useRef<number | null>(null);
   const cloudPushTimerRef = useRef<number | null>(null);
+
+  // 안키 보조 기능: 자유 복습(벼락치기) 모드 및 실행 취소(Undo) 스택
+  const [isCramMode, setIsCramMode] = useState<boolean>(false);
+  const [cramQueueIds, setCramQueueIds] = useState<string[]>([]);
+  const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
 
   const [isFolderSidebarOpen, setIsFolderSidebarOpen] = useState<boolean>(false);
   const [showBottomStats, setShowBottomStats] = useState<boolean>(false);
@@ -279,7 +305,6 @@ export function App() {
     setTimeout(() => setToastMsg(''), 3200);
   };
 
-  // 멀티 기기(PC/아이폰/안드로이드) 클라우드 자동 업로드 예약
   const scheduleCloudPush = (
       nextItems: VocabItem[],
       nextCategories: string[],
@@ -303,7 +328,6 @@ export function App() {
     }, 500);
   };
 
-  // 사용자가 지정한 폴더 순서를 유지하도록 정렬 강제 제거
   const allCategories = useMemo(() => {
     const ordered: string[] = [];
     customCategories.forEach((c) => {
@@ -351,6 +375,26 @@ export function App() {
     return items.filter((item) => isCategoryMatch(item.tag, studyCategory));
   }, [items, studyCategory]);
 
+  const starredCount = useMemo(
+      () => selectedPoolItems.filter((item) => item.starred).length,
+      [selectedPoolItems]
+  );
+
+  const weakCount = useMemo(
+      () => selectedPoolItems.filter((item) => isWeakItem(item)).length,
+      [selectedPoolItems]
+  );
+
+  const filteredPoolItems = useMemo(() => {
+    if (studyFilter === 'starred') {
+      return selectedPoolItems.filter((item) => item.starred);
+    }
+    if (studyFilter === 'weak') {
+      return selectedPoolItems.filter((item) => isWeakItem(item));
+    }
+    return selectedPoolItems;
+  }, [selectedPoolItems, studyFilter]);
+
   const selectionMetrics = useMemo(() => {
     let totalTries = 0;
     let totalTimeMs = 0;
@@ -364,9 +408,17 @@ export function App() {
     return { totalTries, avgSec };
   }, [selectedPoolItems]);
 
+  // 일반 FSRS 복습 대기열 vs 자유 복습(벼락치기) 대기열
   const dueItems = useMemo(() => {
+    if (isCramMode) {
+      const itemMap = new Map(filteredPoolItems.map((it) => [it.id, it]));
+      return cramQueueIds
+          .map((id) => itemMap.get(id))
+          .filter((it): it is VocabItem => !!it);
+    }
+
     const endOfToday = new Date().setHours(23, 59, 59, 999);
-    const list = selectedPoolItems.filter((item) => item.card.due.getTime() <= endOfToday);
+    const list = filteredPoolItems.filter((item) => item.card.due.getTime() <= endOfToday);
 
     return [...list].sort((a, b) => {
       const aLast = a.itemStats?.lastSolvedAt || 0;
@@ -376,7 +428,7 @@ export function App() {
       }
       return a.card.due.getTime() - b.card.due.getTime();
     });
-  }, [selectedPoolItems]);
+  }, [filteredPoolItems, isCramMode, cramQueueIds]);
 
   const currentItem = dueItems[0] ?? null;
 
@@ -384,7 +436,6 @@ export function App() {
     cardStartTimeRef.current = Date.now();
   }, [currentItem?.id, studyCategory]);
 
-// [변경 후: 위 구간을 아래 코드로 교체]
   const speakWord = (text: string, customRate?: number) => {
     if (!('speechSynthesis' in window) || !text.trim()) return;
 
@@ -399,14 +450,12 @@ export function App() {
 
     speechTimeoutRef.current = window.setTimeout(() => {
       const voices = window.speechSynthesis.getVoices();
-      // 긴 문장에서도 rate(배속)를 무시하지 않는 로컬 시스템 음성(localService) 최우선 선택
       const enVoice =
           voices.find((v) => (v.lang === 'en-US' || v.lang === 'en_US') && v.localService) ||
           voices.find((v) => v.lang.startsWith('en') && v.localService) ||
           voices.find((v) => v.lang === 'en-US' || v.lang === 'en_US') ||
           voices.find((v) => v.lang.startsWith('en'));
 
-      // 예문이 여러 문장일 때 문장별로 배속(targetRate)을 개별 적용해 배속 풀림 방지
       const chunks = cleanText
           .split(/(?<=[.?!])\s+/)
           .map((s) => s.trim())
@@ -427,7 +476,6 @@ export function App() {
     }, 80);
   };
 
-  // 영어 예문만 추출하여 설정된 배속으로 읽어주는 함수
   const speakExampleOrWord = (item: VocabItem, customRate?: number) => {
     const rateToUse = customRate ?? speechRateRef.current ?? speechRate;
     const engExample = extractEnglishOnly(item.example);
@@ -438,7 +486,6 @@ export function App() {
     }
   };
 
-  // 카드 앞면에서는 단어를 읽고, 정답(뒷면)을 펼치면 설정된 배속으로 영어 예문만 읽어줌
   useEffect(() => {
     if (activeTab !== 'study' || studyMode !== 'flashcard' || !autoSpeak || !currentItem) {
       return;
@@ -450,7 +497,7 @@ export function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, studyMode, autoSpeak, currentItem?.id, isFlipped]);
-  
+
   useEffect(() => {
     if (activeTab === 'study' && studyMode === 'spelling' && currentItem && !spellingResult) {
       spellingInputRef.current?.focus();
@@ -465,7 +512,77 @@ export function App() {
     cardStartTimeRef.current = Date.now();
   };
 
-  // 6번 요청: 상위 폴더 위치(순서) 위/아래 이동
+  // 안키 보조 기능 1: 자유 복습(벼락치기) 시작 및 종료
+  const startCramMode = (overrideFilter?: StudyFilter) => {
+    const targetFilter = overrideFilter ?? studyFilter;
+    let pool = selectedPoolItems;
+    if (targetFilter === 'starred') {
+      pool = selectedPoolItems.filter((item) => item.starred);
+    } else if (targetFilter === 'weak') {
+      pool = selectedPoolItems.filter((item) => isWeakItem(item));
+    }
+
+    if (pool.length === 0) {
+      showToast('해당 조건에 복습할 단어가 없습니다.');
+      return;
+    }
+
+    if (overrideFilter && overrideFilter !== studyFilter) {
+      setStudyFilter(overrideFilter);
+    }
+    setIsCramMode(true);
+    setCramQueueIds(pool.map((item) => item.id));
+    resetCardInteraction();
+    showToast(
+        `⚡ 자유 복습(벼락치기) 시작! FSRS 일정 변경 없이 ${pool.length}단어를 테스트합니다.`
+    );
+  };
+
+  const exitCramMode = () => {
+    setIsCramMode(false);
+    setCramQueueIds([]);
+    resetCardInteraction();
+    showToast('일반 FSRS 복습 모드로 돌아왔습니다.');
+  };
+
+  // 안키 보조 기능 2: 별표(⭐) 북마크 토글
+  const handleToggleStar = (itemId: string, e?: ReactMouseEvent) => {
+    if (e) e.stopPropagation();
+    let targetWord = '';
+    let nextStarred = false;
+
+    const nextItems = items.map((item) => {
+      if (item.id !== itemId) return item;
+      targetWord = item.word;
+      nextStarred = !item.starred;
+      return { ...item, starred: nextStarred };
+    });
+
+    setItems(nextItems);
+    scheduleCloudPush(nextItems, allCategories, stats);
+    if (targetWord) {
+      showToast(
+          nextStarred
+              ? `⭐ "${targetWord}" 단어를 별표 단어장에 추가했습니다.`
+              : `"${targetWord}" 단어의 별표를 해제했습니다.`
+      );
+    }
+  };
+
+  // 안키 보조 기능 3: 직전 카드 평가 되돌리기 (Undo)
+  const handleUndo = () => {
+    if (undoStack.length === 0) return;
+    const lastSnap = undoStack[undoStack.length - 1];
+    setUndoStack((prev) => prev.slice(0, -1));
+    setItems(lastSnap.items);
+    setStats(lastSnap.stats);
+    setIsCramMode(lastSnap.isCramMode);
+    setCramQueueIds(lastSnap.cramQueueIds);
+    resetCardInteraction();
+    scheduleCloudPush(lastSnap.items, allCategories, lastSnap.stats);
+    showToast(`↩️ "${lastSnap.wordLabel}" 카드로 되돌렸습니다.`);
+  };
+
   const handleMoveParentFolder = (parentName: string, direction: 'up' | 'down') => {
     const idx = folderTree.findIndex((g) => g.parent === parentName);
     if (idx < 0) return;
@@ -493,7 +610,6 @@ export function App() {
     scheduleCloudPush(items, nextCategories, stats);
   };
 
-  // 6번 요청: 하위 유닛 폴더 위치(순서) 위/아래 이동
   const handleMoveChildFolder = (
       parentName: string,
       fullPath: string,
@@ -641,14 +757,71 @@ export function App() {
     };
     setItems(nextItems);
     setStats(nextStats);
+    setIsCramMode(false);
+    setCramQueueIds([]);
     scheduleCloudPush(nextItems, allCategories, nextStats);
     showToast(`🔄 [${label}] 복습 일정이 초기화되었습니다.`);
   };
 
   const handleRate = (grade: Grade) => {
     if (!currentItem) return;
+
+    // 평가 직전 상태를 Undo 스택에 저장 (최대 10개)
+    setUndoStack((prev) => [
+      ...prev.slice(-9),
+      {
+        items,
+        stats,
+        isCramMode,
+        cramQueueIds,
+        wordLabel: currentItem.word,
+      },
+    ]);
+
     const nowDate = new Date();
     const elapsedMs = Math.min(120000, Math.max(500, Date.now() - cardStartTimeRef.current));
+    const isEasyOrGood =
+        (grade === Rating.Good || grade === Rating.Easy) &&
+        (studyMode !== 'spelling' || spellingResult === 'correct');
+
+    // 자유 복습(벼락치기) 모드일 때: FSRS card.due 일정을 변경하지 않고 큐만 이동
+    if (isCramMode) {
+      const nextItems = items.map((item) => {
+        if (item.id !== currentItem.id) return item;
+        const prevStats = item.itemStats ?? createEmptyItemStats();
+        return {
+          ...item,
+          itemStats: {
+            wins: prevStats.wins + (isEasyOrGood ? 1 : 0),
+            losses: prevStats.losses + (isEasyOrGood ? 0 : 1),
+            recentHistory: prevStats.recentHistory,
+            totalTimeMs: prevStats.totalTimeMs + elapsedMs,
+            lastSolvedAt: nowDate.getTime(),
+          },
+        };
+      });
+
+      const nextStats = recordAnswerStats(stats, isEasyOrGood);
+      setItems(nextItems);
+      setStats(nextStats);
+
+      if (grade === Rating.Again || grade === Rating.Hard) {
+        // 다시/어려움 선택 시 이번 자유 복습 세션 맨 뒤로 보내 다시 테스트
+        setCramQueueIds((prev) => {
+          const rest = prev.filter((id) => id !== currentItem.id);
+          return [...rest, currentItem.id];
+        });
+      } else {
+        // 보통/쉬움 선택 시 이번 자유 복습 세션에서 통과
+        setCramQueueIds((prev) => prev.filter((id) => id !== currentItem.id));
+      }
+
+      scheduleCloudPush(nextItems, allCategories, nextStats);
+      resetCardInteraction();
+      return;
+    }
+
+    // 일반 FSRS 모드일 때
     const record = scheduler.repeat(currentItem.card, nowDate)[grade];
     const nextCard = { ...record.card };
 
@@ -666,10 +839,6 @@ export function App() {
       }
     }
 
-    const isEasy =
-        grade === Rating.Easy &&
-        (studyMode !== 'spelling' || spellingResult === 'correct');
-
     const nextItems = items.map((item) => {
       if (item.id !== currentItem.id) return item;
       const prevStats = item.itemStats ?? createEmptyItemStats();
@@ -677,8 +846,8 @@ export function App() {
         ...item,
         card: nextCard,
         itemStats: {
-          wins: prevStats.wins + (isEasy ? 1 : 0),
-          losses: prevStats.losses + (isEasy ? 0 : 1),
+          wins: prevStats.wins + (isEasyOrGood ? 1 : 0),
+          losses: prevStats.losses + (isEasyOrGood ? 0 : 1),
           recentHistory: prevStats.recentHistory,
           totalTimeMs: prevStats.totalTimeMs + elapsedMs,
           lastSolvedAt: nowDate.getTime(),
@@ -686,20 +855,99 @@ export function App() {
       };
     });
 
-    const nextStats = recordAnswerStats(stats, isEasy);
+    const nextStats = recordAnswerStats(stats, isEasyOrGood);
     setItems(nextItems);
     setStats(nextStats);
     scheduleCloudPush(nextItems, allCategories, nextStats);
     resetCardInteraction();
   };
 
-  // 4번 & 5번 요청: 스펠링 테스트 확인/엔터 시 채점 후 영어 예문만 읽어주기
+  // 안키 보조 기능 4: PC 키보드 단축키 지원 (Space, 1/2/3/4, R, S, Z)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (activeTab !== 'study' || showGgModal) return;
+      const target = e.target as HTMLElement | null;
+      if (
+          target &&
+          (target.tagName === 'INPUT' ||
+              target.tagName === 'TEXTAREA' ||
+              target.tagName === 'SELECT')
+      ) {
+        return;
+      }
+
+      // Ctrl+Z 또는 단독 Z: 실행 취소(Undo)
+      if ((e.key === 'z' || e.key === 'Z') && undoStack.length > 0) {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+
+      if (!currentItem) return;
+
+      // Space: 플래시카드 뒤집기
+      if (e.code === 'Space' && studyMode === 'flashcard' && !isFlipped) {
+        e.preventDefault();
+        setIsFlipped(true);
+        return;
+      }
+
+      // 1, 2, 3, 4: 카드 평가 (뒷면이거나 스펠링 채점 완료 상태일 때)
+      const canRate =
+          (studyMode === 'flashcard' && isFlipped) ||
+          (studyMode === 'spelling' && spellingResult !== null);
+
+      if (canRate) {
+        if (e.key === '1') {
+          e.preventDefault();
+          handleRate(Rating.Again);
+          return;
+        }
+        if (e.key === '2') {
+          e.preventDefault();
+          handleRate(Rating.Hard);
+          return;
+        }
+        if (e.key === '3') {
+          e.preventDefault();
+          handleRate(Rating.Good);
+          return;
+        }
+        if (e.key === '4') {
+          e.preventDefault();
+          handleRate(Rating.Easy);
+          return;
+        }
+      }
+
+      // R: 발음/예문 다시 듣기
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        if (isFlipped || spellingResult) {
+          speakExampleOrWord(currentItem, speechRate);
+        } else {
+          speakWord(currentItem.word, speechRate);
+        }
+        return;
+      }
+
+      // S: 별표(⭐) 토글
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        handleToggleStar(currentItem.id);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
+
   const submitSpellingAnswer = () => {
     if (!currentItem || !typedAnswer.trim()) return;
     const normalizedInput = typedAnswer.trim().replace(/\s+/g, ' ').toLowerCase();
     const normalizedTarget = currentItem.word.trim().replace(/\s+/g, ' ').toLowerCase();
     setSpellingResult(normalizedInput === normalizedTarget ? 'correct' : 'wrong');
-    speakExampleOrWord(currentItem, speechRateRef.current);
+    speakExampleOrWord(currentItem, speechRate);
   };
 
   const handleCheckSpelling = (e: FormEvent) => {
@@ -707,7 +955,6 @@ export function App() {
     submitSpellingAnswer();
   };
 
-  // 7번 요청: PC / 아이폰 / 안드로이드 양방향 NAS 동기화
   const handleSyncFromNas = async (
       silent: boolean = false,
       overrideUrl?: string,
@@ -730,7 +977,6 @@ export function App() {
       let baseStats = stats;
       let pulledFromRemote = false;
 
-      // 다른 기기(PC 등)에서 저장한 최신 클라우드 상태가 있거나, 현재 기기가 비어있는 경우 받아오기
       if (
           remoteCloudState &&
           remoteCloudState.items.length > 0 &&
@@ -767,7 +1013,6 @@ export function App() {
           showToast(`☁️ 다른 기기의 최신 단어장(${baseItems.length}단어)과 동기화되었습니다!`);
         }
       } else {
-        // 현재 기기에 단어가 있는데 NAS 클라우드가 비어있거나 구버전이면 현재 기기 상태를 NAS로 업로드
         if (
             items.length > 0 &&
             (!remoteCloudState ||
@@ -990,7 +1235,6 @@ export function App() {
     showToast(`[${normFolder}]에 ${added.length}개 단어가 등록되었습니다.`);
   };
 
-  // 3번 요청: 단어 삭제 시 확인 알림창 표시
   const handleDeleteItem = (item: VocabItem) => {
     if (!window.confirm(`"${item.word}" 단어를 정말 삭제하시겠습니까?`)) return;
     const nextItems = items.filter((it) => it.id !== item.id);
@@ -1003,7 +1247,7 @@ export function App() {
   const handleExportJson = () => {
     const payload = {
       app: '소이의 단어 암기장',
-      version: 7,
+      version: 8,
       exportedAt: new Date().toISOString(),
       categories: allCategories,
       items: selectedPoolItems.length > 0 ? selectedPoolItems : items,
@@ -1053,6 +1297,8 @@ export function App() {
     const q = searchQuery.trim().toLowerCase();
     return items.filter((item) => {
       if (!isCategoryMatch(item.tag, listCategory)) return false;
+      if (studyFilter === 'starred' && !item.starred) return false;
+      if (studyFilter === 'weak' && !isWeakItem(item)) return false;
       if (!q) return true;
       return (
           item.word.toLowerCase().includes(q) ||
@@ -1060,7 +1306,7 @@ export function App() {
           (item.example && item.example.toLowerCase().includes(q))
       );
     });
-  }, [items, searchQuery, listCategory]);
+  }, [items, searchQuery, listCategory, studyFilter]);
 
   const currentCardMetrics = useMemo(() => {
     const st = currentItem?.itemStats ?? createEmptyItemStats();
@@ -1076,7 +1322,6 @@ export function App() {
 
   const now = new Date();
   const scheduling = currentItem ? scheduler.repeat(currentItem.card, now) : null;
-  // 1번 요청: 카드 결과 버튼에서 승/패 표시 제거
   const ratingOptions: Array<{
     grade: Grade;
     label: string;
@@ -1086,31 +1331,34 @@ export function App() {
       ? [
         {
           grade: Rating.Again,
-          label: '다시',
+          label: '다시 (1)',
           className: 'rate-again',
-          intervalText: '오늘 끝부분 재복습',
+          intervalText: isCramMode ? '세션 끝 재복습' : '오늘 끝부분 재복습',
         },
         {
           grade: Rating.Hard,
-          label: '어려움',
+          label: '어려움 (2)',
           className: 'rate-hard',
-          intervalText: '오늘 끝부분 재복습',
+          intervalText: isCramMode ? '세션 끝 재복습' : '오늘 끝부분 재복습',
         },
         {
           grade: Rating.Good,
-          label: '보통',
+          label: '보통 (3)',
           className: 'rate-good',
-          intervalText:
-              scheduling[Rating.Good].card.due.getTime() <=
+          intervalText: isCramMode
+              ? '이번 복습 통과'
+              : scheduling[Rating.Good].card.due.getTime() <=
               new Date().setHours(23, 59, 59, 999)
                   ? '1일 뒤'
                   : formatInterval(scheduling[Rating.Good].card.due, now),
         },
         {
           grade: Rating.Easy,
-          label: '쉬움',
+          label: '쉬움 (4)',
           className: 'rate-easy',
-          intervalText: formatInterval(scheduling[Rating.Easy].card.due, now),
+          intervalText: isCramMode
+              ? '이번 복습 통과'
+              : formatInterval(scheduling[Rating.Easy].card.due, now),
         },
       ]
       : [];
@@ -1382,6 +1630,19 @@ export function App() {
 
         {activeTab === 'study' && (
             <div className="study-main">
+              {/* 자유 복습(벼락치기) 모드 활성화 배너 */}
+              {isCramMode && (
+                  <div className="cram-banner">
+              <span>
+                ⚡ <strong>자유 복습(벼락치기) 모드</strong> 진행 중 · FSRS 일정 변경 없이 남은{' '}
+                {dueItems.length}단어를 테스트합니다
+              </span>
+                    <button type="button" className="secondary-btn" onClick={exitCramMode}>
+                      일반 모드로 종료
+                    </button>
+                  </div>
+              )}
+
               {/* 1순위: 제목 바로 아래 플래시카드 최상단 배치 */}
               {!currentItem ? (
                   <div className="done-card">
@@ -1389,12 +1650,38 @@ export function App() {
                       <Sparkles size={26} />
                     </div>
                     <h2 style={{ margin: '0 0 6px', fontSize: '1.15rem' }}>
-                      [{studyCategory === 'ALL' ? '전체 단어장' : studyCategory}] 오늘 복습 완료!
+                      [{studyCategory === 'ALL' ? '전체 단어장' : studyCategory}]{' '}
+                      {isCramMode ? '자유 복습 완료!' : '오늘 복습 완료!'}
                     </h2>
                     <p style={{ color: '#64748b', fontSize: '0.86rem', marginBottom: 16 }}>
                       오늘 총 <strong>{stats.todayReviewed}회</strong> 복습을 마쳤습니다.
                     </p>
                     <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      {filteredPoolItems.length > 0 && (
+                          <button
+                              type="button"
+                              className="submit-btn"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                              onClick={() => startCramMode()}
+                          >
+                            <Zap size={15} />
+                            ⚡ 자유 복습 (벼락치기 {filteredPoolItems.length}단어)
+                          </button>
+                      )}
+                      {isCramMode && (
+                          <button type="button" className="secondary-btn" onClick={exitCramMode}>
+                            일반 모드로 돌아가기
+                          </button>
+                      )}
+                      {studyFilter !== 'all' && (
+                          <button
+                              type="button"
+                              className="secondary-btn"
+                              onClick={() => setStudyFilter('all')}
+                          >
+                            전체 필터 보기
+                          </button>
+                      )}
                       {studyCategory !== 'ALL' && (
                           <button
                               type="button"
@@ -1411,13 +1698,6 @@ export function App() {
                       >
                         📂 다른 폴더 선택
                       </button>
-                      <button
-                          type="button"
-                          className="secondary-btn"
-                          onClick={() => setActiveTab('add')}
-                      >
-                        + 단어 추가하기
-                      </button>
                     </div>
                   </div>
               ) : studyMode === 'flashcard' ? (
@@ -1429,28 +1709,51 @@ export function App() {
                       <div className="card-top-row">
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <span className="badge-state">
-                      {getStateLabel(currentItem.card.state)}
+                      {isCramMode ? '⚡ 자유 복습' : getStateLabel(currentItem.card.state)}
                     </span>
                           <span className="cat-badge">
                       <FolderOpen size={11} />
                             {normalizeCategory(currentItem.tag)}
                     </span>
+                          {isWeakItem(currentItem) && (
+                              <span
+                                  className="badge-state"
+                                  style={{ background: '#ffedd5', color: '#c2410c' }}
+                              >
+                        🔥 취약 단어
+                      </span>
+                          )}
                         </div>
-                        <button
-                            type="button"
-                            className="icon-circle-btn"
-                            title={isFlipped ? '영어 예문 듣기' : '단어 발음 듣기'}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (isFlipped) {
-                                speakExampleOrWord(currentItem, speechRate);
-                              } else {
-                                speakWord(currentItem.word, speechRate);
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <button
+                              type="button"
+                              className={`star-circle-btn ${currentItem.starred ? 'active' : ''}`}
+                              title="별표(⭐) 단어장 추가/해제 (단축키 S)"
+                              onClick={(e) => handleToggleStar(currentItem.id, e)}
+                          >
+                            <Star
+                                size={18}
+                                fill={currentItem.starred ? 'currentColor' : 'none'}
+                            />
+                          </button>
+                          <button
+                              type="button"
+                              className="icon-circle-btn"
+                              title={
+                                isFlipped ? '영어 예문 듣기 (단축키 R)' : '단어 발음 듣기 (단축키 R)'
                               }
-                            }}
-                        >
-                          <Volume2 size={19} />
-                        </button>
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isFlipped) {
+                                  speakExampleOrWord(currentItem, speechRate);
+                                } else {
+                                  speakWord(currentItem.word, speechRate);
+                                }
+                              }}
+                          >
+                            <Volume2 size={19} />
+                          </button>
+                        </div>
                       </div>
 
                       <div className="card-center">
@@ -1481,8 +1784,8 @@ export function App() {
                       <div className="flip-hint">
                         <RotateCcw size={13} />
                         {!isFlipped
-                            ? '카드를 터치하면 뜻과 함께 영어 예문을 읽어줍니다'
-                            : '다시/어려움은 오늘 마지막에 다시 나오고, 보통/쉬움은 다음 복습일로 넘어갑니다'}
+                            ? '카드를 터치(또는 Space)하면 뜻과 함께 영어 예문을 읽어줍니다'
+                            : '다시(1)/어려움(2)은 끝부분에 다시 나오고, 보통(3)/쉬움(4)은 통과합니다'}
                       </div>
                     </div>
 
@@ -1509,24 +1812,40 @@ export function App() {
                     <div className="study-card">
                       <div className="card-top-row">
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <span className="cat-badge">
+                    <span className="badge-state">
+                      {isCramMode ? '⚡ 자유 복습' : getStateLabel(currentItem.card.state)}
+                    </span>
+                          <span className="cat-badge">
                       <FolderOpen size={11} />
-                      {normalizeCategory(currentItem.tag)}
+                            {normalizeCategory(currentItem.tag)}
                     </span>
                         </div>
-                        <button
-                            type="button"
-                            className="icon-circle-btn"
-                            onClick={() =>
-                                spellingResult
-                                    ? speakExampleOrWord(currentItem, speechRate)
-                                    : speakWord(currentItem.word, speechRate)
-                            }
-                        >
-                          <Volume2 size={19} />
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <button
+                              type="button"
+                              className={`star-circle-btn ${currentItem.starred ? 'active' : ''}`}
+                              title="별표(⭐) 단어장 추가/해제"
+                              onClick={(e) => handleToggleStar(currentItem.id, e)}
+                          >
+                            <Star
+                                size={18}
+                                fill={currentItem.starred ? 'currentColor' : 'none'}
+                            />
+                          </button>
+                          <button
+                              type="button"
+                              className="icon-circle-btn"
+                              onClick={() =>
+                                  spellingResult
+                                      ? speakExampleOrWord(currentItem, speechRate)
+                                      : speakWord(currentItem.word, speechRate)
+                              }
+                          >
+                            <Volume2 size={19} />
+                          </button>
+                        </div>
                       </div>
-                      
+
                       <div className="card-center">
                         <div className="spelling-prompt-label">다음 뜻에 맞는 영어 스펠링을 입력하세요</div>
                         <div className="meaning-display">
@@ -1534,7 +1853,7 @@ export function App() {
                               ? getSpellingPromptMeaning(currentItem.meaning, currentItem.word)
                               : expandMeaningAbbreviations(currentItem.meaning)}
                         </div>
-                        
+
                         {!spellingResult && (
                             <div className="spelling-helpers">
                               <button
@@ -1705,6 +2024,77 @@ export function App() {
                 </div>
               </div>
 
+              {/* 2.5순위 (안키 스타일 보조 바): 별표/취약 필터 + 실행 취소(Undo) + 자유 복습(벼락치기) */}
+              <div className="anki-filter-bar">
+                <div className="filter-chip-group">
+                  <button
+                      type="button"
+                      className={`filter-chip ${studyFilter === 'all' ? 'active' : ''}`}
+                      onClick={() => {
+                        setStudyFilter('all');
+                        if (isCramMode) setCramQueueIds(selectedPoolItems.map((it) => it.id));
+                        resetCardInteraction();
+                      }}
+                  >
+                    전체 ({selectedPoolItems.length})
+                  </button>
+                  <button
+                      type="button"
+                      className={`filter-chip star ${studyFilter === 'starred' ? 'active' : ''}`}
+                      onClick={() => {
+                        setStudyFilter('starred');
+                        if (isCramMode) {
+                          setCramQueueIds(
+                              selectedPoolItems.filter((it) => it.starred).map((it) => it.id)
+                          );
+                        }
+                        resetCardInteraction();
+                      }}
+                  >
+                    <Star size={13} fill={studyFilter === 'starred' ? 'currentColor' : 'none'} />
+                    별표 단어 ({starredCount})
+                  </button>
+                  <button
+                      type="button"
+                      className={`filter-chip weak ${studyFilter === 'weak' ? 'active' : ''}`}
+                      onClick={() => {
+                        setStudyFilter('weak');
+                        if (isCramMode) {
+                          setCramQueueIds(
+                              selectedPoolItems.filter((it) => isWeakItem(it)).map((it) => it.id)
+                          );
+                        }
+                        resetCardInteraction();
+                      }}
+                  >
+                    <Flame size={13} />
+                    취약 단어 ({weakCount})
+                  </button>
+                </div>
+
+                <div className="filter-chip-group">
+                  <button
+                      type="button"
+                      className="undo-btn"
+                      disabled={undoStack.length === 0}
+                      onClick={handleUndo}
+                      title="방금 넘긴 카드 되돌리기 (단축키 Z)"
+                  >
+                    <Undo2 size={14} />
+                    되돌리기 {undoStack.length > 0 ? `(${undoStack.length})` : ''}
+                  </button>
+                  <button
+                      type="button"
+                      className={`cram-toggle-btn ${isCramMode ? 'active' : ''}`}
+                      onClick={() => (isCramMode ? exitCramMode() : startCramMode())}
+                      title="FSRS 복습 일정을 유지한 채 현재 폴더 전체 단어를 테스트합니다"
+                  >
+                    <Zap size={13} />
+                    {isCramMode ? '자유 복습 종료' : '자유 복습 (벼락치기)'}
+                  </button>
+                </div>
+              </div>
+
               {/* 3순위 (카드 아래): 폴더/통계 관리, 폴더 선택, 기기 간 동기화, 연속 학습일, 남은 복습 */}
               <div
                   className="header-badges"
@@ -1779,8 +2169,8 @@ export function App() {
                     <Flame size={14} />
                     {stats.streak}일째
                   </div>
-                  <div className="due-pill" title="오늘 복습해야 할 남은 단어 수">
-                    남은 복습 {dueItems.length}
+                  <div className="due-pill" title="남은 복습 단어 수">
+                    {isCramMode ? `벼락치기 ${dueItems.length}` : `남은 복습 ${dueItems.length}`}
                   </div>
                 </div>
               </div>
@@ -1822,7 +2212,7 @@ export function App() {
                   </div>
               )}
 
-              {/* 폴더 선택 버튼을 눌렀을 때 카드 아래에 펼쳐지는 폴더 트리 (위치 변경 및 이름 수정 지원) */}
+              {/* 폴더 선택 버튼을 눌렀을 때 카드 아래에 펼쳐지는 폴더 트리 */}
               {isFolderSidebarOpen && (
                   <aside className="folder-sidebar">
                     <div className="folder-sidebar-header">
@@ -1847,6 +2237,7 @@ export function App() {
                             className={`folder-item ${studyCategory === 'ALL' ? 'active' : ''}`}
                             onClick={() => {
                               setStudyCategory('ALL');
+                              setIsCramMode(false);
                               resetCardInteraction();
                             }}
                         >
@@ -1892,6 +2283,7 @@ export function App() {
                                     onClick={() => {
                                       setStudyCategory(group.parent);
                                       setTargetCategory(group.parent);
+                                      setIsCramMode(false);
                                       resetCardInteraction();
                                     }}
                                 >
@@ -1960,6 +2352,7 @@ export function App() {
                                                 onClick={() => {
                                                   setStudyCategory(child.fullPath);
                                                   setTargetCategory(child.fullPath);
+                                                  setIsCramMode(false);
                                                   resetCardInteraction();
                                                 }}
                                             >
@@ -2025,7 +2418,13 @@ export function App() {
                   </aside>
               )}
 
-              {/* 4순위 (제일 하단): 승패 없이 깔끔한 FSRS 학습 통계 */}
+              {/* PC 키보드 단축키 안내 바 */}
+              <div className="shortcut-hint-bar">
+                ⌨️ PC 단축키: <strong>Space</strong> (카드 뒤집기) · <strong>1~4</strong> (다시/어려움/보통/쉬움) ·{' '}
+                <strong>R</strong> (발음/예문 듣기) · <strong>S</strong> (별표 토글) · <strong>Z</strong> (되돌리기)
+              </div>
+
+              {/* 4순위 (제일 하단): FSRS 학습 통계 */}
               <div className="bottom-stats-wrap">
                 <button
                     type="button"
@@ -2276,7 +2675,7 @@ export function App() {
                     </div>
                     <textarea
                         className="bulk-textarea"
-                        placeholder="한국어 뜻 / 반의어 / 파생어"
+                        placeholder="한국어 뜻 / 반대어 / 파생어"
                         value={newMeaning}
                         onChange={(e) => setNewMeaning(e.target.value)}
                         required
@@ -2297,7 +2696,7 @@ export function App() {
                   <>
               <textarea
                   className="bulk-textarea"
-                  placeholder="early - (형) 이른, (부) 일찍 | I often take walks in the early morning."
+                  placeholder="early - (형용사) 이른, (부사) 일찍 | I often take walks in the early morning."
                   value={bulkText}
                   onChange={(e) => setBulkText(e.target.value)}
               />
@@ -2309,7 +2708,7 @@ export function App() {
             </div>
         )}
 
-        {/* 2번 요청: 단어 목록 화면에서도 계층형 문제집 폴더 트리로 조회 및 편집 */}
+        {/* 단어 목록 탭: 계층형 폴더 트리 + 별표/취약 필터 + 단어별 별표/수정/삭제 */}
         {activeTab === 'list' && (
             <div className="panel-card">
               <div className="list-folder-tree-box">
@@ -2513,6 +2912,33 @@ export function App() {
                 />
               </div>
 
+              {/* 단어 목록 내 별표/취약 필터 바 */}
+              <div className="filter-chip-group">
+                <button
+                    type="button"
+                    className={`filter-chip ${studyFilter === 'all' ? 'active' : ''}`}
+                    onClick={() => setStudyFilter('all')}
+                >
+                  전체 보기
+                </button>
+                <button
+                    type="button"
+                    className={`filter-chip star ${studyFilter === 'starred' ? 'active' : ''}`}
+                    onClick={() => setStudyFilter('starred')}
+                >
+                  <Star size={13} fill={studyFilter === 'starred' ? 'currentColor' : 'none'} />
+                  별표 단어만 ({items.filter((it) => isCategoryMatch(it.tag, listCategory) && it.starred).length})
+                </button>
+                <button
+                    type="button"
+                    className={`filter-chip weak ${studyFilter === 'weak' ? 'active' : ''}`}
+                    onClick={() => setStudyFilter('weak')}
+                >
+                  <Flame size={13} />
+                  취약 단어만 ({items.filter((it) => isCategoryMatch(it.tag, listCategory) && isWeakItem(it)).length})
+                </button>
+              </div>
+
               <div className="search-box">
                 <Search size={16} />
                 <input
@@ -2580,7 +3006,7 @@ export function App() {
                                               ...it,
                                               word: editWord.trim(),
                                               phonetic: editPhonetic.trim() || undefined,
-                                              meaning: editMeaning.trim(),
+                                              meaning: expandMeaningAbbreviations(editMeaning),
                                               example: editExample.trim() || undefined,
                                               tag: norm,
                                             }
@@ -2606,6 +3032,14 @@ export function App() {
                                     <span className="word-row-phonetic">{item.phonetic}</span>
                                 )}
                                 <span className="cat-badge">{normalizeCategory(item.tag)}</span>
+                                {isWeakItem(item) && (
+                                    <span
+                                        className="badge-state"
+                                        style={{ background: '#ffedd5', color: '#c2410c' }}
+                                    >
+                            🔥 취약
+                          </span>
+                                )}
                               </div>
                               <div className="word-row-meaning">{item.meaning}</div>
                               {item.example && (
@@ -2629,6 +3063,14 @@ export function App() {
                               </div>
                             </div>
                             <div className="row-actions">
+                              <button
+                                  type="button"
+                                  className={`mini-icon-btn ${item.starred ? 'star-active' : ''}`}
+                                  title="별표(⭐) 체크/해제"
+                                  onClick={() => handleToggleStar(item.id)}
+                              >
+                                <Star size={15} fill={item.starred ? 'currentColor' : 'none'} />
+                              </button>
                               <button
                                   type="button"
                                   className="mini-icon-btn"

@@ -15,6 +15,7 @@ export interface VocabItem {
     meaning: string;
     example?: string;
     tag?: string;
+    starred?: boolean;
     itemStats?: VocabItemStats;
     card: Card;
     createdAt: number;
@@ -47,4 +48,5 @@ export interface CloudSyncState {
 }
 
 export type StudyMode = 'flashcard' | 'spelling';
+export type StudyFilter = 'all' | 'starred' | 'weak';
 export type AppTab = 'study' | 'add' | 'list';
