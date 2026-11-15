@@ -32,7 +32,10 @@ import {
   Loader2,
   CheckSquare,
   Square,
+  RefreshCw,
+  Server,
 } from 'lucide-react';
+
 import type {
   VocabItem,
   StudyMode,
@@ -61,6 +64,11 @@ import {
   resizeImageToBase64,
   extractVocabFromImage,
 } from './utils/ocr';
+import {
+  loadNasWebhookUrl,
+  saveNasWebhookUrl,
+  fetchNewNasVocab,
+} from './utils/cloudSync';
 
 function formatInterval(due: Date, now: Date): string {
   const diffMs = Math.max(0, due.getTime() - now.getTime());
@@ -159,6 +167,61 @@ export function App() {
   useEffect(() => {
     saveStudyStats(stats);
   }, [stats]);
+
+  // [변경 후: 바로 아래에 NAS 동기화 상태 및 함수 추가]
+  useEffect(() => {
+    saveStudyStats(stats);
+  }, [stats]);
+
+  const [nasWebhookUrl, setNasWebhookUrl] = useState<string>(() => loadNasWebhookUrl());
+  const [nasUrlInput, setNasUrlInput] = useState<string>(() => loadNasWebhookUrl());
+  const [showNasConfig, setShowNasConfig] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  const handleSyncFromNas = async (silent: boolean = false, overrideUrl?: string) => {
+    const targetUrl = (overrideUrl ?? nasWebhookUrl).trim();
+    if (!targetUrl || isSyncing) return;
+
+    setIsSyncing(true);
+    try {
+      const { newItems, newCategories } = await fetchNewNasVocab(items, targetUrl);
+      if (newItems.length > 0) {
+        setItems((prev) => [...newItems, ...prev]);
+        setCustomCategories((prev) => Array.from(new Set([...prev, ...newCategories])));
+        showToast(
+            `📥 NAS에서 새 단어 ${newItems.length}개(${newCategories.join(', ')})를 가져왔습니다!`
+        );
+      } else if (!silent) {
+        showToast('NAS와 동기화 완료! 새로 추가된 단어가 없습니다.');
+      }
+    } catch {
+      if (!silent) {
+        showToast('NAS 연결에 실패했습니다. n8n 웹훅 주소와 Active 상태를 확인해 주세요.');
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleSaveNasWebhook = () => {
+    saveNasWebhookUrl(nasUrlInput);
+    const saved = loadNasWebhookUrl();
+    setNasWebhookUrl(saved);
+    setShowNasConfig(false);
+    if (saved) {
+      showToast('NAS n8n 웹훅 주소가 저장되었습니다.');
+      handleSyncFromNas(false, saved);
+    } else {
+      showToast('NAS 웹훅 주소가 삭제되었습니다.');
+    }
+  };
+
+  useEffect(() => {
+    if (nasWebhookUrl) {
+      handleSyncFromNas(true, nasWebhookUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 전체 학습장 목록 (저장된 목록 + 단어에 부여된 태그 통합)
   const allCategories = useMemo(() => {
@@ -576,12 +639,31 @@ export function App() {
 
   return (
       <div className="app-shell">
+        // [변경 후: 위 구간 전체를 아래 코드로 교체]
         <header className="app-header">
           <div>
             <h1 className="app-title">Soi Vocab</h1>
             <p className="app-subtitle">전체 {items.length}단어 · FSRS 망각곡선 복습</p>
           </div>
           <div className="header-badges">
+            <button
+                type="button"
+                className="mini-icon-btn"
+                onClick={() => setShowNasConfig((prev) => !prev)}
+                title="NAS n8n 웹훅 설정"
+            >
+              <Server size={15} />
+            </button>
+            {nasWebhookUrl && (
+                <button
+                    type="button"
+                    className="mini-icon-btn"
+                    onClick={() => handleSyncFromNas(false)}
+                    title="NAS에서 텔레그램 단어 가져오기"
+                >
+                  <RefreshCw size={15} className={isSyncing ? 'spin' : ''} />
+                </button>
+            )}
             <div className="streak-pill" title="연속 학습일">
               <Flame size={14} />
               {stats.streak}일째
@@ -590,6 +672,35 @@ export function App() {
           </div>
         </header>
 
+        {showNasConfig && (
+            <div className="api-key-box">
+              <div>
+                <strong>NAS n8n Production Webhook 주소</strong>를 입력하면 텔레그램으로 보낸 단어장 사진이
+                앱을 열 때마다 자동으로 들어옵니다.
+              </div>
+              <div className="api-key-row">
+                <input
+                    type="url"
+                    className="mini-input"
+                    placeholder="https://내NAS도메인/webhook/soi-vocab-inbox"
+                    value={nasUrlInput}
+                    onChange={(e) => setNasUrlInput(e.target.value)}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                />
+                <button
+                    type="button"
+                    className="submit-btn"
+                    style={{ padding: '0 14px', fontSize: '0.82rem' }}
+                    onClick={handleSaveNasWebhook}
+                >
+                  저장
+                </button>
+              </div>
+            </div>
+        )}
+
+        {toastMsg && activeTab === 'study' && <div className="toast-banner">{toastMsg}</div>}
         {activeTab === 'study' && (
             <>
               <div className="category-strip">
