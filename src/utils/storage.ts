@@ -42,15 +42,85 @@ export function saveLocalUpdatedAt(ts: number = Date.now()): number {
 /**
  * 예문 텍스트에서 한글 해석과 A:/B: 기호를 제거하고 영어 문장만 추출
  */
+// [변경 후: 위 구간을 아래 코드로 교체]
+/**
+ * 품사 및 단어 관계 약어를 풀네임으로 변환
+ * 예: (형)->(형용사), [형]->[형용사], [반]->[반대어], [파]->[파생어], [부]->[부사], [영]->[영영풀이]
+ */
+export function expandMeaningAbbreviations(text?: string): string {
+    if (!text) return '';
+    const map: Array<[RegExp, string]> = [
+        [/\(\s*형\s*\)/g, '(형용사)'],
+        [/\[\s*형\s*\]/g, '[형용사]'],
+        [/\(\s*명\s*\)/g, '(명사)'],
+        [/\[\s*명\s*\]/g, '[명사]'],
+        [/\(\s*동\s*\)/g, '(동사)'],
+        [/\[\s*동\s*\]/g, '[동사]'],
+        [/\(\s*부\s*\)/g, '(부사)'],
+        [/\[\s*부\s*\]/g, '[부사]'],
+        [/\(\s*대\s*\)/g, '(대명사)'],
+        [/\[\s*대\s*\]/g, '[대명사]'],
+        [/\(\s*전\s*\)/g, '(전치사)'],
+        [/\[\s*전\s*\]/g, '[전치사]'],
+        [/\(\s*접\s*\)/g, '(접속사)'],
+        [/\[\s*접\s*\]/g, '[접속사]'],
+        [/\(\s*감\s*\)/g, '(감탄사)'],
+        [/\[\s*감\s*\]/g, '[감탄사]'],
+        [/\(\s*(?:반|반의어)\s*\)/g, '(반대어)'],
+        [/\[\s*(?:반|반의어)\s*\]/g, '[반대어]'],
+        [/\(\s*파\s*\)/g, '(파생어)'],
+        [/\[\s*파\s*\]/g, '[파생어]'],
+        [/\(\s*(?:유|동의어)\s*\)/g, '(유의어)'],
+        [/\[\s*(?:유|동의어)\s*\]/g, '[유의어]'],
+        [/\(\s*관\s*\)/g, '(관련어)'],
+        [/\[\s*관\s*\]/g, '[관련어]'],
+        [/\(\s*(?:영|영영)\s*\)/g, '(영영풀이)'],
+        [/\[\s*(?:영|영영)\s*\]/g, '[영영풀이]'],
+        [/\(\s*숙\s*\)/g, '(숙어)'],
+        [/\[\s*숙\s*\]/g, '[숙어]'],
+    ];
+
+    let result = text.trim();
+    for (const [regex, replacement] of map) {
+        result = result.replace(regex, replacement);
+    }
+    return result;
+}
+
+/**
+ * 스펠링 테스트 문제 출제 시 [파]/[파생어] 줄을 숨기고, 뜻 안에 포함된 정답 영단어를 가림
+ */
+export function getSpellingPromptMeaning(meaning: string, targetWord?: string): string {
+    const expanded = expandMeaningAbbreviations(meaning);
+    const lines = expanded.split('\n');
+
+    const filtered = lines.filter(
+        (line) => !/^\s*[[(]\s*(?:파|파생어)\s*[\])]/.test(line.trim())
+    );
+
+    const baseLines = filtered.length > 0 ? filtered : lines;
+    let result = baseLines.join('\n');
+
+    if (targetWord && targetWord.trim().length >= 3) {
+        const escaped = targetWord.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        result = result.replace(new RegExp(escaped, 'gi'), '_____');
+    }
+    return result;
+}
+
+/**
+ * 예문 텍스트에서 한글 해석, A:/B: 기호, + 숙어 설명 줄을 제외하고 순수 영어 예문만 추출
+ */
 export function extractEnglishOnly(rawExample?: string): string {
     if (!rawExample) return '';
     const lines = rawExample
         .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !/^[+*•※]/.test(l))
         .map((line) => {
-            // 줄 앞의 A:, B: 등 화자 표시 제거
             let cleaned = line.replace(/^[A-Za-z]\s*:\s*/g, '');
-            // 한글 및 한글 괄호 설명 제거
             cleaned = cleaned.replace(/[ㄱ-ㅎㅏ-ㅣ가-힣]+/g, ' ');
+            cleaned = cleaned.replace(/[~:]/g, ' ');
             cleaned = cleaned.replace(/\(\s*\)/g, ' ');
             cleaned = cleaned.replace(/\s+/g, ' ').trim();
             return cleaned;
@@ -96,6 +166,7 @@ export function createEmptyItemStats(): VocabItemStats {
     };
 }
 
+// [변경 후: 위 구간을 아래 코드로 교체]
 export function createNewVocabItem(
     word: string,
     meaning: string,
@@ -108,7 +179,7 @@ export function createNewVocabItem(
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         word: word.trim(),
         phonetic: phonetic?.trim() || undefined,
-        meaning: meaning.trim(),
+        meaning: expandMeaningAbbreviations(meaning),
         example: example?.trim() || undefined,
         tag: normalizeCategory(tag),
         itemStats: createEmptyItemStats(),
@@ -134,6 +205,7 @@ export function hydrateVocabItems(list: unknown[]): VocabItem[] {
         .map((item) => ({
             ...item,
             phonetic: item.phonetic?.trim() || undefined,
+            meaning: expandMeaningAbbreviations(item.meaning),
             tag: normalizeCategory(item.tag),
             itemStats: item.itemStats
                 ? {

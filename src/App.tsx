@@ -66,10 +66,14 @@ import {
   normalizeCategory,
   loadCustomCategories,
   saveCustomCategories,
+// [변경 후]
   extractEnglishOnly,
+  expandMeaningAbbreviations,
+  getSpellingPromptMeaning,
   loadLocalUpdatedAt,
   saveLocalUpdatedAt,
 } from './utils/storage';
+
 import {
   loadGeminiApiKey,
   saveGeminiApiKey,
@@ -381,6 +385,7 @@ export function App() {
     cardStartTimeRef.current = Date.now();
   }, [currentItem?.id, studyCategory]);
 
+// [변경 후: 위 구간을 아래 코드로 교체]
   const speakWord = (text: string, customRate?: number) => {
     if (!('speechSynthesis' in window) || !text.trim()) return;
 
@@ -389,50 +394,64 @@ export function App() {
     }
     window.speechSynthesis.cancel();
 
-    const targetRate = customRate ?? speechRateRef.current;
+    const rawRate = customRate ?? speechRateRef.current ?? speechRate;
+    const targetRate = Number(Math.min(2.0, Math.max(0.4, rawRate)).toFixed(2));
     const cleanText = text.trim();
 
     speechTimeoutRef.current = window.setTimeout(() => {
-      const utterance = new SpeechSynthesisUtterance(cleanText);
       const voices = window.speechSynthesis.getVoices();
+      // 긴 문장에서도 rate(배속)를 무시하지 않는 로컬 시스템 음성(localService) 최우선 선택
       const enVoice =
-          voices.find((v) => v.lang === 'en-US' && v.localService) ||
-          voices.find((v) => v.lang === 'en-US') ||
+          voices.find((v) => (v.lang === 'en-US' || v.lang === 'en_US') && v.localService) ||
+          voices.find((v) => v.lang.startsWith('en') && v.localService) ||
+          voices.find((v) => v.lang === 'en-US' || v.lang === 'en_US') ||
           voices.find((v) => v.lang.startsWith('en'));
 
-      if (enVoice) {
-        utterance.voice = enVoice;
-      }
-      utterance.lang = 'en-US';
-      utterance.rate = targetRate;
-      utterance.pitch = 1.0;
-      window.speechSynthesis.speak(utterance);
-    }, 60);
+      // 예문이 여러 문장일 때 문장별로 배속(targetRate)을 개별 적용해 배속 풀림 방지
+      const chunks = cleanText
+          .split(/(?<=[.?!])\s+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+      const list = chunks.length > 0 ? chunks : [cleanText];
+
+      list.forEach((sentence) => {
+        const utterance = new SpeechSynthesisUtterance(sentence);
+        if (enVoice) {
+          utterance.voice = enVoice;
+        }
+        utterance.lang = 'en-US';
+        utterance.rate = targetRate;
+        utterance.pitch = 1.0;
+        window.speechSynthesis.speak(utterance);
+      });
+    }, 80);
   };
 
-  // 영어 예문만 추출하여 읽어주는 헬퍼 함수 (예문이 없으면 단어를 읽음)
+  // 영어 예문만 추출하여 설정된 배속으로 읽어주는 함수
   const speakExampleOrWord = (item: VocabItem, customRate?: number) => {
+    const rateToUse = customRate ?? speechRateRef.current ?? speechRate;
     const engExample = extractEnglishOnly(item.example);
     if (engExample) {
-      speakWord(engExample, customRate);
+      speakWord(engExample, rateToUse);
     } else {
-      speakWord(item.word, customRate);
+      speakWord(item.word, rateToUse);
     }
   };
 
-  // 5번 요청: 카드 앞면에서는 단어를 읽고, 정답(뒷면)을 펼치면 영어 예문만 읽어줌
+  // 카드 앞면에서는 단어를 읽고, 정답(뒷면)을 펼치면 설정된 배속으로 영어 예문만 읽어줌
   useEffect(() => {
     if (activeTab !== 'study' || studyMode !== 'flashcard' || !autoSpeak || !currentItem) {
       return;
     }
     if (!isFlipped) {
-      speakWord(currentItem.word, speechRateRef.current);
+      speakWord(currentItem.word, speechRate);
     } else {
-      speakExampleOrWord(currentItem, speechRateRef.current);
+      speakExampleOrWord(currentItem, speechRate);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, studyMode, autoSpeak, currentItem?.id, isFlipped]);
-
+  
   useEffect(() => {
     if (activeTab === 'study' && studyMode === 'spelling' && currentItem && !spellingResult) {
       spellingInputRef.current?.focus();
@@ -1509,10 +1528,15 @@ export function App() {
                         </button>
                       </div>
 
+                      // [변경 후]
                       <div className="card-center">
                         <div className="spelling-prompt-label">다음 뜻에 맞는 영어 스펠링을 입력하세요</div>
-                        <div className="meaning-display">{currentItem.meaning}</div>
-
+                        <div className="meaning-display">
+                          {!spellingResult
+                              ? getSpellingPromptMeaning(currentItem.meaning, currentItem.word)
+                              : expandMeaningAbbreviations(currentItem.meaning)}
+                        </div>
+                        
                         {!spellingResult && (
                             <div className="spelling-helpers">
                               <button
