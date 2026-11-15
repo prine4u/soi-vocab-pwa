@@ -57,6 +57,7 @@ export async function clearNasRemoteDb(customWebhookUrl?: string): Promise<void>
 
 /**
  * 현재 기기(PC/아이폰/안드로이드)의 단어장·폴더순서·학습진도를 NAS 서버에 업로드
+ * mode: 'no-cors'를 사용하여 n8n CORS 헤더 설정 없이도 브라우저 차단 없이 즉시 전송
  */
 export async function pushStateToNas(
     state: CloudSyncState,
@@ -65,20 +66,24 @@ export async function pushStateToNas(
     const dbUrl = getDbWebhookUrl(customWebhookUrl);
     if (!dbUrl) return;
 
-    // text/plain 으로 전송하여 브라우저 CORS Preflight(OPTIONS) 차단 없이 즉시 전송
-    await fetch(dbUrl, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'text/plain;charset=UTF-8',
-        },
-        body: JSON.stringify({
-            action: 'sync_push',
-            updatedAt: state.updatedAt,
-            items: state.items,
-            categories: state.categories,
-            stats: state.stats,
-        }),
-    });
+    try {
+        await fetch(dbUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+                'Content-Type': 'text/plain;charset=UTF-8',
+            },
+            body: JSON.stringify({
+                action: 'sync_push',
+                updatedAt: state.updatedAt,
+                items: state.items,
+                categories: state.categories,
+                stats: state.stats,
+            }),
+        });
+    } catch {
+        // 업로드 실패 시에도 앱 학습 흐름이 중단되지 않도록 무시
+    }
 }
 
 function loadSyncedIds(): Set<string> {
@@ -117,7 +122,6 @@ export async function fetchNewNasVocab(
     const response = await fetch(webhookUrl, {
         method: 'GET',
         headers: { Accept: 'application/json' },
-        cache: 'no-store',
     });
 
     if (!response.ok) {
