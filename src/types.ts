@@ -3,6 +3,7 @@ import type { Card } from 'ts-fsrs';
 export interface VocabItem {
     id: string;
     word: string;
+    phonetic?: string;
     meaning: string;
     example?: string;
     tag?: string;
@@ -13,6 +14,7 @@ export interface VocabItem {
 export interface ExtractedVocabDraft {
     id: string;
     word: string;
+    phonetic: string;
     meaning: string;
     example: string;
     selected: boolean;

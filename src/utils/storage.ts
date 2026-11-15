@@ -7,17 +7,72 @@ const CATEGORIES_KEY = 'soi_vocab_categories_v1';
 
 export const DEFAULT_CATEGORY = '기본 학습장';
 
-const INITIAL_SAMPLES: Array<{ word: string; meaning: string; example?: string }> = [
-    { word: 'adventure', meaning: '모험', example: 'Reading books is a great adventure.' },
-    { word: 'brave', meaning: '용감한', example: 'The brave knight protected the village.' },
-    { word: 'curious', meaning: '호기심 많은', example: 'She is curious about how stars shine.' },
-    { word: 'discover', meaning: '발견하다', example: 'Scientists discover new things every day.' },
-    { word: 'environment', meaning: '환경', example: 'We must protect our environment.' },
-    { word: 'favorite', meaning: '가장 좋아하는', example: 'What is your favorite season?' },
-    { word: 'imagine', meaning: '상상하다', example: 'Close your eyes and imagine flying.' },
-    { word: 'knowledge', meaning: '지식', example: 'Knowledge comes from reading and practice.' },
-    { word: 'precious', meaning: '소중한', example: 'Time with family is very precious.' },
-    { word: 'strategy', meaning: '전략', example: 'We need a good strategy to win the game.' },
+const INITIAL_SAMPLES: Array<{
+    word: string;
+    phonetic?: string;
+    meaning: string;
+    example?: string;
+}> = [
+    {
+        word: 'adventure',
+        phonetic: '[ədvéntʃər]',
+        meaning: '(명) 모험',
+        example: 'Reading books is a great adventure.\n책을 읽는 것은 멋진 모험이다.',
+    },
+    {
+        word: 'brave',
+        phonetic: '[breiv]',
+        meaning: '(형) 용감한',
+        example: 'The brave knight protected the village.\n그 용감한 기사는 마을을 지켰다.',
+    },
+    {
+        word: 'curious',
+        phonetic: '[kjúəriəs]',
+        meaning: '(형) 호기심 많은',
+        example: 'She is curious about how stars shine.\n그녀는 별이 어떻게 빛나는지 궁금해한다.',
+    },
+    {
+        word: 'discover',
+        phonetic: '[diskʌ́vər]',
+        meaning: '(동) 발견하다',
+        example: 'Scientists discover new things every day.\n과학자들은 매일 새로운 것들을 발견한다.',
+    },
+    {
+        word: 'environment',
+        phonetic: '[inváiərənmənt]',
+        meaning: '(명) 환경',
+        example: 'We must protect our environment.\n우리는 환경을 보호해야 한다.',
+    },
+    {
+        word: 'favorite',
+        phonetic: '[féivərit]',
+        meaning: '(형) 가장 좋아하는\n(명) 특히 좋아하는 것',
+        example: 'What is your favorite season?\n네가 가장 좋아하는 계절은 무엇이니?',
+    },
+    {
+        word: 'imagine',
+        phonetic: '[imǽdʒin]',
+        meaning: '(동) 상상하다',
+        example: 'Close your eyes and imagine flying.\n눈을 감고 하늘을 나는 것을 상상해 봐.',
+    },
+    {
+        word: 'knowledge',
+        phonetic: '[nɑ́lidʒ]',
+        meaning: '(명) 지식',
+        example: 'Knowledge comes from reading and practice.\n지식은 독서와 연습에서 온다.',
+    },
+    {
+        word: 'precious',
+        phonetic: '[préʃəs]',
+        meaning: '(형) 소중한, 귀중한',
+        example: 'Time with family is very precious.\n가족과 함께하는 시간은 매우 소중하다.',
+    },
+    {
+        word: 'strategy',
+        phonetic: '[strǽtədʒi]',
+        meaning: '(명) 전략, 작전',
+        example: 'We need a good strategy to win the game.\n경기에 이기려면 좋은 전략이 필요하다.',
+    },
 ];
 
 export function getDateKey(date: Date = new Date()): string {
@@ -37,11 +92,13 @@ export function createNewVocabItem(
     meaning: string,
     example?: string,
     now: Date = new Date(),
-    tag?: string
+    tag?: string,
+    phonetic?: string
 ): VocabItem {
     return {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         word: word.trim(),
+        phonetic: phonetic?.trim() || undefined,
         meaning: meaning.trim(),
         example: example?.trim() || undefined,
         tag: normalizeCategory(tag),
@@ -71,7 +128,8 @@ export function loadVocabItems(): VocabItem[] {
                     item.meaning,
                     item.example,
                     new Date(Date.now() + idx),
-                    DEFAULT_CATEGORY
+                    DEFAULT_CATEGORY,
+                    item.phonetic
                 )
             );
             saveVocabItems(seeded);
@@ -81,6 +139,7 @@ export function loadVocabItems(): VocabItem[] {
         if (!Array.isArray(parsed)) return [];
         return parsed.map((item) => ({
             ...item,
+            phonetic: item.phonetic?.trim() || undefined,
             tag: normalizeCategory(item.tag),
             card: hydrateCard(item.card),
         }));
@@ -125,7 +184,8 @@ export function getSampleItems(): VocabItem[] {
             item.meaning,
             item.example,
             new Date(now + idx),
-            DEFAULT_CATEGORY
+            DEFAULT_CATEGORY,
+            item.phonetic
         )
     );
 }
@@ -209,6 +269,10 @@ export function parseImportedVocab(jsonText: string): VocabItem[] {
                     ? obj.id
                     : `${now}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
             word,
+            phonetic:
+                typeof obj.phonetic === 'string' && obj.phonetic.trim()
+                    ? obj.phonetic.trim()
+                    : undefined,
             meaning,
             example:
                 typeof obj.example === 'string' && obj.example.trim() ? obj.example.trim() : undefined,

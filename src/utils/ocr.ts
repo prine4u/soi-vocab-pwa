@@ -1,31 +1,25 @@
 const GEMINI_KEY_STORAGE = 'soi_vocab_gemini_api_key_v1';
-
-// 1순위: Gemini 4 Hydrogen (고정밀 멀티모달 추론) / 2순위 폴백: Gemini 3.8 Flash
 const PRIMARY_MODEL = 'gemini-4-hydrogen';
 const FALLBACK_MODEL = 'gemini-3.8-flash';
 
-const SYSTEM_INSTRUCTION = `당신은 완벽주의 영어 교육 데이터 검수 전문가입니다.
-첨부된 교과서, 프린트, 노트 이미지에서 학습할 영어 단어와 숙어를 빠짐없이 추출하세요.
+const SYSTEM_INSTRUCTION = `당신은 완벽주의 영어 교재 및 단어장 데이터 추출 전문가입니다.
+첨부된 단어장 이미지에서 학습할 영어 단어와 숙어를 빠짐없이 추출하세요.
 
-[무수정 완성을 위한 엄격 규칙]
-1. OCR 오탈자 자동 보정: 사진이 흐리거나 손글씨여서 철자가 애매한 경우, 문맥과 실제 영어 사전을 기준으로 100% 정확한 철자로 교정하세요.
-2. 표제어 정규화: 동사의 과거형/분사형이나 명사의 복수형으로 적혀 있더라도 원형(예: studied -> study, apples -> apple)으로 통일해 추출하세요. (단, 숙어나 관용구는 원형 유지)
-3. 한국어 뜻 정제: 뜻이 여러 개 적혀 있으면 핵심 뜻 1~3개를 품사 표기와 함께 쉼표(,)로 깔끔하게 정리하세요. (예: v. 분석하다, n. 분석)
-4. 예문 누락 방지: 이미지에 예문이 함께 찍혀 있으면 그 예문을 정확히 추출하고, 단어와 뜻만 있는 프린트라면 해당 단어의 의미에 맞는 자연스러운 영어 예문 1문장을 직접 작성해 채우세요. (빈 문자열 금지)
-5. 중복 제거: 같은 페이지에 동일 단어가 여러 번 나오면 하나의 항목으로 통합하세요.
-6. 잡음 제외: 페이지 번호, 날짜, 이름, 출판사 로고, 단순 문제 번호 등 학습 단어가 아닌 텍스트는 제외하세요.`;
+[필수 추출 규칙]
+1. word (표제어): 문제 번호(01, 02 등)를 제외한 정확한 영어 단어 또는 숙어를 추출하세요. (하단 Self Check 체크박스 등 중복 항목은 제외)
+2. phonetic (발음기호): 단어 아래나 옆에 적힌 발음기호를 대괄호 포함 그대로 추출하세요 (예: "[ə́ːrli]", "[freʃ]"). 사진에 발음기호가 없으면 표준 IPA 발음기호를 생성해 채우세요.
+3. meaning (다중 품사·뜻·반의어·파생어·영영풀이 전체):
+   - 사진 가운데 칸에 적힌 모든 품사와 뜻(형용사, 부사, 동사, 명사 등)을 절대 자르지 말고 줄바꿈(\\n)으로 구분해 모두 적으세요.
+   - 함께 적힌 반의어([반]), 유의어([유]), 파생어([파]), 관련어([관]), 영영풀이([영영])도 생략하지 말고 줄바꿈(\\n)으로 모두 포함하세요.
+4. example (모든 예문 + 한글 번역):
+   - 오른쪽 칸에 예문이 2개 이상이거나 대화문(A/B)이면 1개만 적지 말고 모든 예문을 빠짐없이 추출하세요.
+   - 각 영어 예문 바로 아랫줄에 사진에 적힌 한글 번역을 반드시 함께 적으세요. (사진에 한글 번역이 없다면 자연스러운 한글 번역을 직접 작성해 추가하세요.)`;
 
-/**
- * 브라우저 localStorage에서 저장된 Gemini API 키를 불러옵니다.
- */
 export function loadGeminiApiKey(): string {
     if (typeof window === 'undefined') return '';
     return window.localStorage.getItem(GEMINI_KEY_STORAGE) || '';
 }
 
-/**
- * 브라우저 localStorage에 Gemini API 키를 저장하거나(빈 값일 경우 삭제) 업데이트합니다.
- */
 export function saveGeminiApiKey(key: string): void {
     if (typeof window === 'undefined') return;
     const trimmed = key.trim();
@@ -36,15 +30,10 @@ export function saveGeminiApiKey(key: string): void {
     }
 }
 
-/**
- * 아이폰 카메라 등의 고해상도 원본 이미지를 최대 2048px 고화질 JPEG로 변환하여
- * 작은 인쇄 글씨와 손글씨 디테일을 보존합니다.
- */
 export async function resizeImageToBase64(
     file: File,
     maxDimension: number = 2048
 ): Promise<{ base64: string; mimeType: string; previewUrl: string }> {
-    // App.tsx에서 1280 등 낮은 값을 넘기더라도 OCR 정확도를 위해 최소 2048px 해상도를 보장합니다.
     const targetMaxDim = Math.max(maxDimension, 2048);
     const objectUrl = URL.createObjectURL(file);
 
@@ -77,10 +66,8 @@ export async function resizeImageToBase64(
             throw new Error('브라우저 캔버스 컨텍스트를 초기화할 수 없습니다.');
         }
 
-        // 투명 PNG 등이 JPEG로 변환될 때 검은 배경이 되지 않도록 흰색 배경 채우기
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, width, height);
-
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
@@ -104,76 +91,54 @@ export async function resizeImageToBase64(
 
 export interface RawExtractedItem {
     word: string;
+    phonetic?: string;
     meaning: string;
     example?: string;
 }
 
 async function callGeminiVisionModel(
     modelName: string,
-    base64: string,
-    mimeType: string,
+    images: Array<{ base64: string; mimeType: string }>,
     apiKey: string,
     useThinkingConfig: boolean
 ): Promise<Response> {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
     const generationConfig: Record<string, unknown> = {
+        maxOutputTokens: 16384,
         responseMimeType: 'application/json',
         responseSchema: {
             type: 'ARRAY',
-            description: '이미지에서 추출 및 철자 교정이 완료된 영어 단어 목록',
             items: {
                 type: 'OBJECT',
                 properties: {
-                    word: {
-                        type: 'STRING',
-                        description: '오탈자가 교정된 정확한 영어 단어 또는 숙어 (표제어 원형 기준)',
-                    },
-                    meaning: {
-                        type: 'STRING',
-                        description: '한국어 뜻 (품사 표기 포함, 예: v. 분석하다, n. 분석)',
-                    },
-                    example: {
-                        type: 'STRING',
-                        description:
-                            '이미지 속 예문. 이미지에 예문이 없으면 해당 단어와 뜻에 맞는 자연스러운 영어 예문 1문장 생성',
-                    },
+                    word: { type: 'STRING' },
+                    phonetic: { type: 'STRING' },
+                    meaning: { type: 'STRING' },
+                    example: { type: 'STRING' },
                 },
-                required: ['word', 'meaning', 'example'],
+                required: ['word', 'phonetic', 'meaning', 'example'],
             },
         },
     };
 
     if (useThinkingConfig) {
-        generationConfig.thinkingConfig = {
-            thinkingLevel: 'HIGH',
-        };
+        generationConfig.thinkingConfig = { thinkingLevel: 'HIGH' };
     } else {
         generationConfig.temperature = 0.1;
     }
 
-    const requestBody = {
-        systemInstruction: {
-            parts: [{ text: SYSTEM_INSTRUCTION }],
+    const parts: Array<Record<string, unknown>> = [
+        {
+            text: `첨부된 ${images.length}장의 이미지에서 모든 영어 단어, 발음기호, 다중 품사/뜻/반의어/파생어, 모든 예문과 한글 번역을 빠짐없이 추출해 반환하세요.`,
         },
-        contents: [
-            {
-                role: 'user',
-                parts: [
-                    {
-                        text: '이 이미지에서 영어 단어와 숙어를 추출하고, 철자·뜻·예문을 검수하여 지정된 JSON 스키마로 반환해주세요.',
-                    },
-                    {
-                        inlineData: {
-                            mimeType,
-                            data: base64,
-                        },
-                    },
-                ],
+        ...images.map((img) => ({
+            inlineData: {
+                mimeType: img.mimeType,
+                data: img.base64,
             },
-        ],
-        generationConfig,
-    };
+        })),
+    ];
 
     return fetch(endpoint, {
         method: 'POST',
@@ -181,16 +146,16 @@ async function callGeminiVisionModel(
             'Content-Type': 'application/json',
             'x-goog-api-key': apiKey,
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({
+            systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+            contents: [{ role: 'user', parts }],
+            generationConfig,
+        }),
     });
 }
 
-/**
- * Gemini 4 Hydrogen 모델을 우선 호출하여 고정밀 OCR 및 단어 검수를 수행합니다.
- */
-export async function extractVocabFromImage(
-    base64: string,
-    mimeType: string,
+export async function extractVocabFromImages(
+    images: Array<{ base64: string; mimeType: string }>,
     apiKey: string
 ): Promise<RawExtractedItem[]> {
     const cleanKey = apiKey.trim();
@@ -198,39 +163,14 @@ export async function extractVocabFromImage(
         throw new Error('Gemini API 키가 설정되지 않았습니다. API 키를 먼저 저장해 주세요.');
     }
 
-    // 1차 시도: Gemini 4 Hydrogen + HIGH Thinking
-    let response = await callGeminiVisionModel(
-        PRIMARY_MODEL,
-        base64,
-        mimeType,
-        cleanKey,
-        true
-    );
-
-    // 만약 API 키 티어나 모델 권한 문제로 400/404 발생 시 Gemini 3.8 Flash로 자동 폴백
+    let response = await callGeminiVisionModel(PRIMARY_MODEL, images, cleanKey, true);
     if (!response.ok && (response.status === 400 || response.status === 404)) {
-        response = await callGeminiVisionModel(
-            FALLBACK_MODEL,
-            base64,
-            mimeType,
-            cleanKey,
-            false
-        );
+        response = await callGeminiVisionModel(FALLBACK_MODEL, images, cleanKey, false);
     }
 
     if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         const apiMessage = errorData?.error?.message || response.statusText;
-
-        if (response.status === 400) {
-            throw new Error(`잘못된 요청입니다 (${apiMessage})`);
-        }
-        if (response.status === 401 || response.status === 403) {
-            throw new Error('API 키가 유효하지 않거나 권한이 없습니다. 키를 다시 확인해 주세요.');
-        }
-        if (response.status === 429) {
-            throw new Error('API 호출 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.');
-        }
         throw new Error(`Gemini API 오류 (${response.status}): ${apiMessage}`);
     }
 
@@ -252,26 +192,24 @@ export async function extractVocabFromImage(
         .replace(/```\s*$/i, '')
         .trim();
 
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(cleanedJson);
-    } catch {
-        throw new Error('모델 응답을 JSON으로 파싱하는 데 실패했습니다.');
-    }
-
-    if (!Array.isArray(parsed)) {
-        throw new Error('예상된 단어 배열 형식이 반환되지 않았습니다.');
-    }
+    const parsed = JSON.parse(cleanedJson) as unknown;
+    if (!Array.isArray(parsed)) return [];
 
     return parsed
-        .filter(
-            (item): item is Record<string, unknown> =>
-                typeof item === 'object' && item !== null
-        )
+        .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
         .map((item) => ({
             word: typeof item.word === 'string' ? item.word.trim() : '',
+            phonetic: typeof item.phonetic === 'string' ? item.phonetic.trim() : '',
             meaning: typeof item.meaning === 'string' ? item.meaning.trim() : '',
             example: typeof item.example === 'string' ? item.example.trim() : '',
         }))
         .filter((item) => item.word.length > 0 && item.meaning.length > 0);
+}
+
+export async function extractVocabFromImage(
+    base64: string,
+    mimeType: string,
+    apiKey: string
+): Promise<RawExtractedItem[]> {
+    return extractVocabFromImages([{ base64, mimeType }], apiKey);
 }

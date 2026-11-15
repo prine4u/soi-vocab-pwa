@@ -4,10 +4,12 @@ import { normalizeCategory } from './storage';
 
 const NAS_WEBHOOK_STORAGE_KEY = 'soi_vocab_nas_webhook_url_v1';
 const SYNCED_IDS_KEY = 'soi_vocab_synced_n8n_ids_v1';
+const DEFAULT_NAS_WEBHOOK_URL = 'https://prine4u.myds.me:8443/webhook/soi-vocab-inbox';
 
 export interface NasVocabRow {
     id: string;
     word: string;
+    phonetic?: string | null;
     meaning: string;
     example?: string | null;
     tag: string;
@@ -16,7 +18,11 @@ export interface NasVocabRow {
 
 export function loadNasWebhookUrl(): string {
     const envUrl = import.meta.env.VITE_NAS_WEBHOOK_URL as string | undefined;
-    return localStorage.getItem(NAS_WEBHOOK_STORAGE_KEY) || envUrl || '';
+    return (
+        localStorage.getItem(NAS_WEBHOOK_STORAGE_KEY) ||
+        envUrl ||
+        DEFAULT_NAS_WEBHOOK_URL
+    );
 }
 
 export function saveNasWebhookUrl(url: string): void {
@@ -26,6 +32,21 @@ export function saveNasWebhookUrl(url: string): void {
     } else {
         localStorage.removeItem(NAS_WEBHOOK_STORAGE_KEY);
     }
+}
+
+export function resetNasSyncHistory(): void {
+    localStorage.removeItem(SYNCED_IDS_KEY);
+}
+
+export async function clearNasRemoteDb(customWebhookUrl?: string): Promise<void> {
+    const webhookUrl = (customWebhookUrl ?? loadNasWebhookUrl()).trim();
+    if (!webhookUrl) return;
+    const separator = webhookUrl.includes('?') ? '&' : '?';
+    await fetch(`${webhookUrl}${separator}clear=1`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+    });
+    resetNasSyncHistory();
 }
 
 function loadSyncedIds(): Set<string> {
@@ -45,11 +66,16 @@ function saveSyncedIds(ids: Set<string>): void {
 
 export async function fetchNewNasVocab(
     existingItems: VocabItem[],
-    customWebhookUrl?: string
+    customWebhookUrl?: string,
+    forceResync: boolean = false
 ): Promise<{ newItems: VocabItem[]; newCategories: string[] }> {
     const webhookUrl = (customWebhookUrl ?? loadNasWebhookUrl()).trim();
     if (!webhookUrl) {
         return { newItems: [], newCategories: [] };
+    }
+
+    if (forceResync) {
+        resetNasSyncHistory();
     }
 
     const response = await fetch(webhookUrl, {
@@ -82,7 +108,7 @@ export async function fetchNewNasVocab(
     rows.forEach((row, idx) => {
         if (!row || typeof row !== 'object' || !row.word || !row.meaning) return;
         const rowId = row.id || `nas-${row.word}-${row.tag || ''}`;
-        if (syncedIds.has(rowId)) return;
+        if (!forceResync && syncedIds.has(rowId)) return;
         syncedIds.add(rowId);
 
         const tag = normalizeCategory(row.tag);
@@ -95,6 +121,7 @@ export async function fetchNewNasVocab(
         newItems.push({
             id: rowId,
             word: row.word.trim(),
+            phonetic: row.phonetic?.trim() || undefined,
             meaning: row.meaning.trim(),
             example: row.example?.trim() || undefined,
             tag,

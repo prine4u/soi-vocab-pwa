@@ -27,6 +27,7 @@ import {
   Flame,
   Gauge,
   Camera,
+  Folder,
   FolderOpen,
   KeyRound,
   Loader2,
@@ -34,8 +35,9 @@ import {
   Square,
   RefreshCw,
   Server,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
-
 import type {
   VocabItem,
   StudyMode,
@@ -62,12 +64,13 @@ import {
   loadGeminiApiKey,
   saveGeminiApiKey,
   resizeImageToBase64,
-  extractVocabFromImage,
+  extractVocabFromImages,
 } from './utils/ocr';
 import {
   loadNasWebhookUrl,
   saveNasWebhookUrl,
   fetchNewNasVocab,
+  clearNasRemoteDb,
 } from './utils/cloudSync';
 
 function formatInterval(due: Date, now: Date): string {
@@ -108,47 +111,53 @@ export function App() {
   const [studyMode, setStudyMode] = useState<StudyMode>('flashcard');
   const [autoSpeak, setAutoSpeak] = useState<boolean>(true);
   const [speechRate, setSpeechRate] = useState<number>(0.9);
+  const [isFolderSidebarOpen, setIsFolderSidebarOpen] = useState<boolean>(true);
 
-  // Category filters
+  // Category states
   const [studyCategory, setStudyCategory] = useState<string>('ALL');
   const [listCategory, setListCategory] = useState<string>('ALL');
   const [targetCategory, setTargetCategory] = useState<string>(DEFAULT_CATEGORY);
   const [isCreatingCategory, setIsCreatingCategory] = useState<boolean>(false);
   const [newCategoryName, setNewCategoryName] = useState<string>('');
 
-  // Flashcard state
+  // Flashcard & Spelling states
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
-
-  // Spelling test state
   const [typedAnswer, setTypedAnswer] = useState<string>('');
   const [spellingResult, setSpellingResult] = useState<'correct' | 'wrong' | null>(null);
   const [showHint, setShowHint] = useState<boolean>(false);
   const spellingInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Add word state
+  // Add word states
   const [addSubTab, setAddSubTab] = useState<'camera' | 'single' | 'bulk'>('camera');
   const [newWord, setNewWord] = useState<string>('');
+  const [newPhonetic, setNewPhonetic] = useState<string>('');
   const [newMeaning, setNewMeaning] = useState<string>('');
   const [newExample, setNewExample] = useState<string>('');
   const [bulkText, setBulkText] = useState<string>('');
   const [toastMsg, setToastMsg] = useState<string>('');
 
-  // Camera / OCR state
+  // Camera / OCR states
   const [geminiApiKey, setGeminiApiKey] = useState<string>(() => loadGeminiApiKey());
   const [apiKeyInput, setApiKeyInput] = useState<string>(() => loadGeminiApiKey());
   const [showApiKeyEditor, setShowApiKeyEditor] = useState<boolean>(
       () => !loadGeminiApiKey()
   );
-  const [ocrPreviewUrl, setOcrPreviewUrl] = useState<string>('');
   const [isExtracting, setIsExtracting] = useState<boolean>(false);
   const [ocrError, setOcrError] = useState<string>('');
   const [extractedDrafts, setExtractedDrafts] = useState<ExtractedVocabDraft[]>([]);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
+  // NAS Sync states
+  const [nasWebhookUrl, setNasWebhookUrl] = useState<string>(() => loadNasWebhookUrl());
+  const [nasUrlInput, setNasUrlInput] = useState<string>(() => loadNasWebhookUrl());
+  const [showNasConfig, setShowNasConfig] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
   // Word list filter & inline edit
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editWord, setEditWord] = useState<string>('');
+  const [editPhonetic, setEditPhonetic] = useState<string>('');
   const [editMeaning, setEditMeaning] = useState<string>('');
   const [editExample, setEditExample] = useState<string>('');
   const [editTag, setEditTag] = useState<string>(DEFAULT_CATEGORY);
@@ -168,23 +177,28 @@ export function App() {
     saveStudyStats(stats);
   }, [stats]);
 
-  // [변경 후: 바로 아래에 NAS 동기화 상태 및 함수 추가]
-  useEffect(() => {
-    saveStudyStats(stats);
-  }, [stats]);
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => {
+      setToastMsg('');
+    }, 3200);
+  };
 
-  const [nasWebhookUrl, setNasWebhookUrl] = useState<string>(() => loadNasWebhookUrl());
-  const [nasUrlInput, setNasUrlInput] = useState<string>(() => loadNasWebhookUrl());
-  const [showNasConfig, setShowNasConfig] = useState<boolean>(false);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-
-  const handleSyncFromNas = async (silent: boolean = false, overrideUrl?: string) => {
+  const handleSyncFromNas = async (
+      silent: boolean = false,
+      overrideUrl?: string,
+      forceResync: boolean = false
+  ) => {
     const targetUrl = (overrideUrl ?? nasWebhookUrl).trim();
     if (!targetUrl || isSyncing) return;
 
     setIsSyncing(true);
     try {
-      const { newItems, newCategories } = await fetchNewNasVocab(items, targetUrl);
+      const { newItems, newCategories } = await fetchNewNasVocab(
+          items,
+          targetUrl,
+          forceResync
+      );
       if (newItems.length > 0) {
         setItems((prev) => [...newItems, ...prev]);
         setCustomCategories((prev) => Array.from(new Set([...prev, ...newCategories])));
@@ -196,7 +210,7 @@ export function App() {
       }
     } catch {
       if (!silent) {
-        showToast('NAS 연결에 실패했습니다. n8n 웹훅 주소와 Active 상태를 확인해 주세요.');
+        showToast('NAS 연결에 실패했습니다. n8n 웹훅 주소와 Publish 상태를 확인해 주세요.');
       }
     } finally {
       setIsSyncing(false);
@@ -210,20 +224,27 @@ export function App() {
     setShowNasConfig(false);
     if (saved) {
       showToast('NAS n8n 웹훅 주소가 저장되었습니다.');
-      handleSyncFromNas(false, saved);
-    } else {
-      showToast('NAS 웹훅 주소가 삭제되었습니다.');
+      handleSyncFromNas(false, saved, false);
+    }
+  };
+
+  const handleClearNasRemote = async () => {
+    if (!window.confirm('NAS(n8n) 대기열에 저장된 이전 스캔 기록을 비우시겠습니까?')) return;
+    try {
+      await clearNasRemoteDb(nasWebhookUrl);
+      showToast('NAS 대기열 데이터가 초기화되었습니다.');
+    } catch {
+      showToast('NAS 초기화 요청 중 오류가 발생했습니다.');
     }
   };
 
   useEffect(() => {
     if (nasWebhookUrl) {
-      handleSyncFromNas(true, nasWebhookUrl);
+      handleSyncFromNas(true, nasWebhookUrl, false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 전체 학습장 목록 (저장된 목록 + 단어에 부여된 태그 통합)
   const allCategories = useMemo(() => {
     const set = new Set<string>([DEFAULT_CATEGORY, ...customCategories]);
     items.forEach((item) => {
@@ -232,7 +253,15 @@ export function App() {
     return Array.from(set);
   }, [customCategories, items]);
 
-  // 오늘 자정(23:59:59)까지 복습 예정인 전체 단어 목록
+  const totalCountByCategory = useMemo(() => {
+    const map = new Map<string, number>();
+    items.forEach((item) => {
+      const cat = normalizeCategory(item.tag);
+      map.set(cat, (map.get(cat) || 0) + 1);
+    });
+    return map;
+  }, [items]);
+
   const allDueItems = useMemo(() => {
     const now = new Date();
     const endOfToday = new Date(
@@ -250,7 +279,6 @@ export function App() {
         .sort((a, b) => a.card.due.getTime() - b.card.due.getTime());
   }, [items]);
 
-  // 선택된 학습장 기준 복습 대상
   const dueItems = useMemo(() => {
     if (studyCategory === 'ALL') return allDueItems;
     return allDueItems.filter(
@@ -258,7 +286,6 @@ export function App() {
     );
   }, [allDueItems, studyCategory]);
 
-  // 학습장별 남은 복습 개수 맵
   const dueCountByCategory = useMemo(() => {
     const map = new Map<string, number>();
     allDueItems.forEach((item) => {
@@ -297,13 +324,6 @@ export function App() {
     }
   }, [activeTab, studyMode, currentItem?.id, spellingResult]);
 
-  const showToast = (msg: string) => {
-    setToastMsg(msg);
-    setTimeout(() => {
-      setToastMsg('');
-    }, 3000);
-  };
-
   const resetCardInteraction = () => {
     setIsFlipped(false);
     setTypedAnswer('');
@@ -316,9 +336,26 @@ export function App() {
     if (!cleaned) return;
     setCustomCategories((prev) => Array.from(new Set([...prev, cleaned])));
     setTargetCategory(cleaned);
+    setStudyCategory(cleaned);
     setNewCategoryName('');
     setIsCreatingCategory(false);
-    showToast(`"${cleaned}" 학습장이 생성되었습니다.`);
+    showToast(`"${cleaned}" 폴더가 생성되었습니다.`);
+  };
+
+  const handleDeleteCategory = (catName: string) => {
+    const count = totalCountByCategory.get(catName) || 0;
+    const msg =
+        count > 0
+            ? `[${catName}] 학습장 폴더와 안에 들어있는 단어 ${count}개를 모두 삭제하시겠습니까?`
+            : `[${catName}] 빈 폴더를 삭제하시겠습니까?`;
+    if (!window.confirm(msg)) return;
+
+    setItems((prev) => prev.filter((item) => normalizeCategory(item.tag) !== catName));
+    setCustomCategories((prev) => prev.filter((c) => c !== catName));
+    if (studyCategory === catName) setStudyCategory('ALL');
+    if (listCategory === catName) setListCategory('ALL');
+    if (targetCategory === catName) setTargetCategory(DEFAULT_CATEGORY);
+    showToast(`[${catName}] 폴더가 삭제되었습니다.`);
   };
 
   const handleRate = (grade: Grade) => {
@@ -359,9 +396,10 @@ export function App() {
     }
   };
 
-  const handlePhotoSelected = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handlePhotosSelected = async (e: ChangeEvent<HTMLInputElement>) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
     e.target.value = '';
 
     setOcrError('');
@@ -369,10 +407,15 @@ export function App() {
     setIsExtracting(true);
 
     try {
-      const { base64, mimeType, previewUrl } = await resizeImageToBase64(file, 1280);
-      setOcrPreviewUrl(previewUrl);
+      const resizedPayloads = await Promise.all(
+          files.map((file) => resizeImageToBase64(file, 2048))
+      );
 
-      const extracted = await extractVocabFromImage(base64, mimeType, geminiApiKey);
+      const extracted = await extractVocabFromImages(
+          resizedPayloads.map((p) => ({ base64: p.base64, mimeType: p.mimeType })),
+          geminiApiKey
+      );
+
       if (extracted.length === 0) {
         setOcrError('사진에서 영어 단어를 찾지 못했습니다. 글자가 선명하게 나오도록 다시 찍어보세요.');
       } else {
@@ -381,6 +424,7 @@ export function App() {
             extracted.map((item, idx) => ({
               id: `draft-${now}-${idx}`,
               word: item.word,
+              phonetic: item.phonetic || '',
               meaning: item.meaning,
               example: item.example || '',
               selected: true,
@@ -396,7 +440,7 @@ export function App() {
 
   const handleUpdateDraft = (
       id: string,
-      field: 'word' | 'meaning' | 'example' | 'selected',
+      field: 'word' | 'phonetic' | 'meaning' | 'example' | 'selected',
       value: string | boolean
   ) => {
     setExtractedDrafts((prev) =>
@@ -420,14 +464,14 @@ export function App() {
             draft.meaning,
             draft.example,
             new Date(now + idx),
-            targetCategory
+            targetCategory,
+            draft.phonetic
         )
     );
 
     setItems((prev) => [...created, ...prev]);
     setExtractedDrafts([]);
-    setOcrPreviewUrl('');
-    showToast(`[${targetCategory}]에 ${created.length}개 단어가 저장되었습니다.`);
+    showToast(`[${targetCategory}]에 ${created.length}개 단어가 한 번에 저장되었습니다.`);
   };
 
   const handleAddSingle = (e: FormEvent) => {
@@ -439,10 +483,12 @@ export function App() {
         newMeaning,
         newExample,
         new Date(),
-        targetCategory
+        targetCategory,
+        newPhonetic
     );
     setItems((prev) => [created, ...prev]);
     setNewWord('');
+    setNewPhonetic('');
     setNewMeaning('');
     setNewExample('');
     showToast(`[${targetCategory}]에 "${created.word}" 단어가 추가되었습니다.`);
@@ -491,6 +537,7 @@ export function App() {
   const startEditing = (item: VocabItem) => {
     setEditingId(item.id);
     setEditWord(item.word);
+    setEditPhonetic(item.phonetic ?? '');
     setEditMeaning(item.meaning);
     setEditExample(item.example ?? '');
     setEditTag(normalizeCategory(item.tag));
@@ -504,6 +551,7 @@ export function App() {
                 ? {
                   ...item,
                   word: editWord.trim(),
+                  phonetic: editPhonetic.trim() || undefined,
                   meaning: editMeaning.trim(),
                   example: editExample.trim() || undefined,
                   tag: normalizeCategory(editTag),
@@ -531,7 +579,7 @@ export function App() {
   const handleExportJson = () => {
     const payload = {
       app: 'Soi Vocab',
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       categories: allCategories,
       items,
@@ -561,8 +609,12 @@ export function App() {
 
       setItems((prev) => {
         const map = new Map<string, VocabItem>();
-        prev.forEach((item) => map.set(item.word.toLowerCase(), item));
-        imported.forEach((item) => map.set(item.word.toLowerCase(), item));
+        prev.forEach((item) =>
+            map.set(`${normalizeCategory(item.tag)}::${item.word.toLowerCase()}`, item)
+        );
+        imported.forEach((item) =>
+            map.set(`${normalizeCategory(item.tag)}::${item.word.toLowerCase()}`, item)
+        );
         return Array.from(map.values());
       });
       showToast(`${imported.length}개의 단어를 불러왔습니다.`);
@@ -581,7 +633,9 @@ export function App() {
       if (!matchCategory) return false;
       if (!q) return true;
       return (
-          item.word.toLowerCase().includes(q) || item.meaning.toLowerCase().includes(q)
+          item.word.toLowerCase().includes(q) ||
+          item.meaning.toLowerCase().includes(q) ||
+          (item.example && item.example.toLowerCase().includes(q))
       );
     });
   }, [items, searchQuery, listCategory]);
@@ -639,13 +693,20 @@ export function App() {
 
   return (
       <div className="app-shell">
-        // [변경 후: 위 구간 전체를 아래 코드로 교체]
         <header className="app-header">
           <div>
             <h1 className="app-title">Soi Vocab</h1>
             <p className="app-subtitle">전체 {items.length}단어 · FSRS 망각곡선 복습</p>
           </div>
           <div className="header-badges">
+            <button
+                type="button"
+                className="mini-icon-btn"
+                onClick={() => setIsFolderSidebarOpen((prev) => !prev)}
+                title={isFolderSidebarOpen ? '왼쪽 폴더 메뉴 접기' : '왼쪽 폴더 메뉴 열기'}
+            >
+              {isFolderSidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
+            </button>
             <button
                 type="button"
                 className="mini-icon-btn"
@@ -658,7 +719,7 @@ export function App() {
                 <button
                     type="button"
                     className="mini-icon-btn"
-                    onClick={() => handleSyncFromNas(false)}
+                    onClick={() => handleSyncFromNas(false, undefined, false)}
                     title="NAS에서 텔레그램 단어 가져오기"
                 >
                   <RefreshCw size={15} className={isSyncing ? 'spin' : ''} />
@@ -675,14 +736,14 @@ export function App() {
         {showNasConfig && (
             <div className="api-key-box">
               <div>
-                <strong>NAS n8n Production Webhook 주소</strong>를 입력하면 텔레그램으로 보낸 단어장 사진이
-                앱을 열 때마다 자동으로 들어옵니다.
+                <strong>NAS n8n Production Webhook 주소</strong> (텔레그램 스캔 단어 자동 동기화)
               </div>
               <div className="api-key-row">
                 <input
                     type="url"
                     className="mini-input"
-                    placeholder="https://내NAS도메인/webhook/soi-vocab-inbox"
+                    style={{ flex: 1 }}
+                    placeholder="https://prine4u.myds.me:8443/webhook/soi-vocab-inbox"
                     value={nasUrlInput}
                     onChange={(e) => setNasUrlInput(e.target.value)}
                     autoCapitalize="none"
@@ -691,368 +752,479 @@ export function App() {
                 <button
                     type="button"
                     className="submit-btn"
-                    style={{ padding: '0 14px', fontSize: '0.82rem' }}
+                    style={{ padding: '7px 12px', fontSize: '0.8rem' }}
                     onClick={handleSaveNasWebhook}
                 >
-                  저장
+                  주소 저장
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ fontSize: '0.76rem', padding: '6px 10px' }}
+                    onClick={() => handleSyncFromNas(false, nasUrlInput, true)}
+                >
+                  🔄 NAS 단어 전체 다시 불러오기
+                </button>
+                <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ fontSize: '0.76rem', padding: '6px 10px', color: '#dc2626' }}
+                    onClick={handleClearNasRemote}
+                >
+                  🗑️ NAS 대기열 비우기
                 </button>
               </div>
             </div>
         )}
 
         {toastMsg && activeTab === 'study' && <div className="toast-banner">{toastMsg}</div>}
+
         {activeTab === 'study' && (
-            <>
-              <div className="category-strip">
-                <button
-                    type="button"
-                    className={`cat-chip ${studyCategory === 'ALL' ? 'active' : ''}`}
-                    onClick={() => {
-                      setStudyCategory('ALL');
-                      resetCardInteraction();
-                    }}
-                >
-                  전체 ({allDueItems.length})
-                </button>
-                {allCategories.map((cat) => {
-                  const count = dueCountByCategory.get(cat) || 0;
-                  return (
+            <div className={`study-layout ${isFolderSidebarOpen ? '' : 'sidebar-collapsed'}`}>
+              {/* 카드 왼쪽 폴더형 학습장 선택 메뉴 */}
+              {isFolderSidebarOpen && (
+                  <aside className="folder-sidebar">
+                    <div className="folder-sidebar-header">
+                <span className="folder-sidebar-title">
+                  <FolderOpen size={15} />
+                  학습장 폴더
+                </span>
                       <button
-                          key={cat}
                           type="button"
-                          className={`cat-chip ${studyCategory === cat ? 'active' : ''}`}
-                          onClick={() => {
-                            setStudyCategory(cat);
-                            resetCardInteraction();
-                          }}
+                          className="helper-chip"
+                          style={{ padding: '3px 7px', fontSize: '0.7rem' }}
+                          onClick={() => setIsCreatingCategory((prev) => !prev)}
                       >
-                        {cat} ({count})
+                        {isCreatingCategory ? '취소' : '+ 폴더'}
                       </button>
-                  );
-                })}
-              </div>
-
-              <div className="progress-wrap">
-                <div className="progress-top">
-                  <span>오늘 전체 진행률 ({stats.todayReviewed}회 완료)</span>
-                  <span>{progressPercent}%</span>
-                </div>
-                <div className="progress-track">
-                  <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
-                </div>
-              </div>
-
-              <div className="toolbar">
-                <div className="mode-switch">
-                  <button
-                      type="button"
-                      className={`mode-btn ${studyMode === 'flashcard' ? 'active' : ''}`}
-                      onClick={() => {
-                        setStudyMode('flashcard');
-                        resetCardInteraction();
-                      }}
-                  >
-                    <Layers size={15} />
-                    플래시카드
-                  </button>
-                  <button
-                      type="button"
-                      className={`mode-btn ${studyMode === 'spelling' ? 'active' : ''}`}
-                      onClick={() => {
-                        setStudyMode('spelling');
-                        resetCardInteraction();
-                      }}
-                  >
-                    <Keyboard size={15} />
-                    스펠링 테스트
-                  </button>
-                </div>
-
-                <div className="toolbar-actions">
-                  <button
-                      type="button"
-                      className={`auto-audio-btn ${speechRate < 0.8 ? 'on' : ''}`}
-                      onClick={() => {
-                        const nextRate = speechRate === 0.9 ? 0.65 : 0.9;
-                        setSpeechRate(nextRate);
-                        if (currentItem) speakWord(currentItem.word, nextRate);
-                      }}
-                      title="발음 속도 전환"
-                  >
-                    <Gauge size={14} />
-                    {speechRate === 0.9 ? '0.9x' : '0.65x'}
-                  </button>
-
-                  <button
-                      type="button"
-                      className={`auto-audio-btn ${autoSpeak ? 'on' : ''}`}
-                      onClick={() => setAutoSpeak((prev) => !prev)}
-                  >
-                    <Volume2 size={14} />
-                    {autoSpeak ? '자동' : '수동'}
-                  </button>
-                </div>
-              </div>
-
-              {!currentItem ? (
-                  <div className="done-card">
-                    <div className="done-icon">
-                      <Sparkles size={26} />
                     </div>
-                    <h2 className="done-title">
-                      {studyCategory === 'ALL'
-                          ? '오늘 복습할 단어를 모두 마쳤어요!'
-                          : `[${studyCategory}] 복습을 모두 마쳤어요!`}
-                    </h2>
-                    <p className="done-desc">
-                      오늘 총 <strong>{stats.todayReviewed}회</strong> 복습을 완료했습니다.
-                      <br />
-                      {studyCategory !== 'ALL' && allDueItems.length > 0
-                          ? `다른 학습장에 ${allDueItems.length}개의 복습 단어가 남아 있습니다.`
-                          : '사진을 찍거나 새 단어를 추가해 계속 학습해 보세요.'}
-                    </p>
-                    <div style={{ display: 'flex', justifyContent: 'center', gap: 8 }}>
-                      {studyCategory !== 'ALL' && allDueItems.length > 0 && (
+
+                    {isCreatingCategory && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          <input
+                              type="text"
+                              className="mini-input"
+                              placeholder="새 학습장 이름..."
+                              value={newCategoryName}
+                              onChange={(e) => setNewCategoryName(e.target.value)}
+                          />
                           <button
                               type="button"
-                              className="secondary-btn"
-                              onClick={() => setStudyCategory('ALL')}
+                              className="submit-btn"
+                              style={{ padding: '6px', fontSize: '0.78rem' }}
+                              onClick={handleCreateCategory}
                           >
-                            전체 학습장 보기
+                            폴더 만들기
                           </button>
-                      )}
-                      <button
-                          type="button"
-                          className="secondary-btn"
-                          onClick={() => setActiveTab('add')}
-                      >
-                        + 단어 추가하기
-                      </button>
-                    </div>
-                  </div>
-              ) : studyMode === 'flashcard' ? (
-                  <>
-                    <div
-                        className="study-card clickable"
-                        onClick={() => setIsFlipped((prev) => !prev)}
-                    >
-                      <div className="card-top-row">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className="badge-state">
-                      {getStateLabel(currentItem.card.state)}
-                    </span>
-                          <span className="cat-badge">
-                      <FolderOpen size={11} />
-                            {normalizeCategory(currentItem.tag)}
-                    </span>
-                        </div>
-                        <button
-                            type="button"
-                            className="icon-circle-btn"
-                            aria-label="발음 듣기"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              speakWord(currentItem.word);
-                            }}
-                        >
-                          <Volume2 size={20} />
-                        </button>
-                      </div>
-
-                      <div className="card-center">
-                        {!isFlipped ? (
-                            <h2 className="word-display">{currentItem.word}</h2>
-                        ) : (
-                            <>
-                              <p className="meaning-display">{currentItem.meaning}</p>
-                              <p style={{ margin: '8px 0 0', color: '#64748b', fontWeight: 600 }}>
-                                {currentItem.word}
-                              </p>
-                              {currentItem.example && (
-                                  <div className="example-box">{currentItem.example}</div>
-                              )}
-                            </>
-                        )}
-                      </div>
-
-                      <div className="flip-hint">
-                        <RotateCcw size={14} />
-                        {!isFlipped ? '카드를 터치해 뜻 확인하기' : '카드를 터치해 단어 보기'}
-                      </div>
-                    </div>
-
-                    {isFlipped && (
-                        <div className="rating-section">
-                          <p className="rating-guide">기억난 정도를 선택하면 다음 복습일이 자동 계산됩니다</p>
-                          <div className="rating-grid">
-                            {ratingOptions.map((opt) => (
-                                <button
-                                    key={opt.grade}
-                                    type="button"
-                                    className={`rate-btn ${opt.className}`}
-                                    onClick={() => handleRate(opt.grade)}
-                                >
-                                  <span className="rate-label">{opt.label}</span>
-                                  <span className="rate-interval">{opt.intervalText}</span>
-                                </button>
-                            ))}
-                          </div>
                         </div>
                     )}
-                  </>
-              ) : (
-                  <>
-                    <div className="study-card">
-                      <div className="card-top-row">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className="badge-state">
-                      {getStateLabel(currentItem.card.state)}
-                    </span>
-                          <span className="cat-badge">
-                      <FolderOpen size={11} />
-                            {normalizeCategory(currentItem.tag)}
-                    </span>
-                        </div>
+
+                    <div className="folder-list">
+                      <div className="folder-item-wrap">
                         <button
                             type="button"
-                            className="icon-circle-btn"
-                            aria-label="발음 듣기"
-                            onClick={() => speakWord(currentItem.word)}
+                            className={`folder-item ${studyCategory === 'ALL' ? 'active' : ''}`}
+                            onClick={() => {
+                              setStudyCategory('ALL');
+                              resetCardInteraction();
+                            }}
                         >
-                          <Volume2 size={20} />
+                    <span className="folder-item-left">
+                      {studyCategory === 'ALL' ? (
+                          <FolderOpen size={15} />
+                      ) : (
+                          <Folder size={15} />
+                      )}
+                      <span className="folder-name">전체 단어장</span>
+                    </span>
+                          <span className="folder-count">
+                      {allDueItems.length}/{items.length}
+                    </span>
                         </button>
                       </div>
 
-                      <div className="card-center">
-                        <div className="spelling-prompt-label">다음 뜻에 맞는 영어 스펠링을 입력하세요</div>
-                        <h2 className="meaning-display">{currentItem.meaning}</h2>
-
-                        {!spellingResult && (
-                            <div className="spelling-helpers">
+                      {allCategories.map((cat) => {
+                        const dueCount = dueCountByCategory.get(cat) || 0;
+                        const totalCount = totalCountByCategory.get(cat) || 0;
+                        const isActive = studyCategory === cat;
+                        return (
+                            <div key={cat} className="folder-item-wrap">
                               <button
                                   type="button"
-                                  className="helper-chip"
-                                  onClick={() => speakWord(currentItem.word)}
+                                  className={`folder-item ${isActive ? 'active' : ''}`}
+                                  onClick={() => {
+                                    setStudyCategory(cat);
+                                    setTargetCategory(cat);
+                                    resetCardInteraction();
+                                  }}
+                                  title={`${cat} (복습 ${dueCount} / 전체 ${totalCount})`}
                               >
-                                <Volume2 size={14} />
-                                발음 듣기
+                        <span className="folder-item-left">
+                          {isActive ? <FolderOpen size={15} /> : <Folder size={15} />}
+                          <span className="folder-name">{cat}</span>
+                        </span>
+                                <span className="folder-count">
+                          {dueCount}/{totalCount}
+                        </span>
                               </button>
-                              <button
-                                  type="button"
-                                  className="helper-chip"
-                                  onClick={() => setShowHint((prev) => !prev)}
-                              >
-                                <HelpCircle size={14} />
-                                {showHint ? '힌트 숨기기' : '첫 글자 힌트'}
-                              </button>
-                            </div>
-                        )}
-
-                        {showHint && !spellingResult && (
-                            <div className="hint-text">{getSpellingHint(currentItem.word)}</div>
-                        )}
-
-                        {!spellingResult ? (
-                            <form className="spelling-form" onSubmit={handleCheckSpelling}>
-                              <input
-                                  ref={spellingInputRef}
-                                  type="text"
-                                  className="spelling-input"
-                                  placeholder="영어 단어 입력..."
-                                  value={typedAnswer}
-                                  onChange={(e) => setTypedAnswer(e.target.value)}
-                                  autoCapitalize="none"
-                                  autoCorrect="off"
-                                  autoComplete="off"
-                                  spellCheck={false}
-                                  enterKeyHint="done"
-                              />
-                              <button type="submit" className="submit-btn">
-                                확인
-                              </button>
-                            </form>
-                        ) : (
-                            <div className={`spelling-feedback ${spellingResult}`}>
-                              <div className="feedback-badge">
-                                {spellingResult === 'correct' ? (
-                                    <>
-                                      <Check size={18} />
-                                      정답입니다!
-                                    </>
-                                ) : (
-                                    <>
-                                      <X size={18} />
-                                      스펠링을 다시 확인해 보세요
-                                    </>
-                                )}
-                              </div>
-                              <div className="answer-compare">
-                                {spellingResult === 'wrong' && (
-                                    <div>
-                                      입력한 답:{' '}
-                                      <span style={{ textDecoration: 'line-through' }}>{typedAnswer}</span>
-                                    </div>
-                                )}
-                                <div>
-                                  정답: <strong>{currentItem.word}</strong>
-                                </div>
-                              </div>
-                              {currentItem.example && (
-                                  <div className="example-box">{currentItem.example}</div>
+                              {cat !== DEFAULT_CATEGORY && (
+                                  <button
+                                      type="button"
+                                      className="folder-del-btn"
+                                      title="이 폴더 삭제"
+                                      onClick={() => handleDeleteCategory(cat)}
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
                               )}
                             </div>
-                        )}
-                      </div>
+                        );
+                      })}
+                    </div>
+                  </aside>
+              )}
 
-                      <div className="flip-hint">
-                        {!spellingResult
-                            ? 'Enter 또는 확인 버튼을 눌러 채점하세요'
-                            : '아래에서 난이도를 선택해 다음 단어로 넘어가세요'}
+              {/* 오른쪽 학습 카드 영역 */}
+              <div className="study-main">
+                <div className="progress-wrap">
+                  <div className="progress-top">
+                <span>
+                  {studyCategory === 'ALL' ? '전체 학습장' : `[${studyCategory}]`} · 오늘 완료{' '}
+                  {stats.todayReviewed}회
+                </span>
+                    <span>{progressPercent}%</span>
+                  </div>
+                  <div className="progress-track">
+                    <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
+                  </div>
+                </div>
+
+                <div className="toolbar">
+                  <div className="mode-switch">
+                    <button
+                        type="button"
+                        className={`mode-btn ${studyMode === 'flashcard' ? 'active' : ''}`}
+                        onClick={() => {
+                          setStudyMode('flashcard');
+                          resetCardInteraction();
+                        }}
+                    >
+                      <Layers size={15} />
+                      플래시카드
+                    </button>
+                    <button
+                        type="button"
+                        className={`mode-btn ${studyMode === 'spelling' ? 'active' : ''}`}
+                        onClick={() => {
+                          setStudyMode('spelling');
+                          resetCardInteraction();
+                        }}
+                    >
+                      <Keyboard size={15} />
+                      스펠링 테스트
+                    </button>
+                  </div>
+
+                  <div className="toolbar-actions">
+                    <button
+                        type="button"
+                        className={`auto-audio-btn ${speechRate < 0.8 ? 'on' : ''}`}
+                        onClick={() => {
+                          const nextRate = speechRate === 0.9 ? 0.65 : 0.9;
+                          setSpeechRate(nextRate);
+                          if (currentItem) speakWord(currentItem.word, nextRate);
+                        }}
+                        title="발음 속도 전환"
+                    >
+                      <Gauge size={14} />
+                      {speechRate === 0.9 ? '0.9x' : '0.65x'}
+                    </button>
+
+                    <button
+                        type="button"
+                        className={`auto-audio-btn ${autoSpeak ? 'on' : ''}`}
+                        onClick={() => setAutoSpeak((prev) => !prev)}
+                    >
+                      <Volume2 size={14} />
+                      {autoSpeak ? '자동' : '수동'}
+                    </button>
+                  </div>
+                </div>
+
+                {!currentItem ? (
+                    <div className="done-card">
+                      <div className="done-icon">
+                        <Sparkles size={26} />
+                      </div>
+                      <h2 className="done-title">
+                        {studyCategory === 'ALL'
+                            ? '오늘 복습할 단어를 모두 마쳤어요!'
+                            : `[${studyCategory}] 복습을 모두 마쳤어요!`}
+                      </h2>
+                      <p className="done-desc">
+                        오늘 총 <strong>{stats.todayReviewed}회</strong> 복습을 완료했습니다.
+                        <br />
+                        {studyCategory !== 'ALL' && allDueItems.length > 0
+                            ? `왼쪽 폴더 메뉴에서 다른 학습장(${allDueItems.length}개 남음)을 선택해 보세요.`
+                            : '텔레그램에 단어장 사진을 올리거나 새 단어를 추가해 보세요.'}
+                      </p>
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        {studyCategory !== 'ALL' && allDueItems.length > 0 && (
+                            <button
+                                type="button"
+                                className="secondary-btn"
+                                onClick={() => setStudyCategory('ALL')}
+                            >
+                              전체 단어장 보기
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={() => handleSyncFromNas(false, undefined, false)}
+                        >
+                          📥 NAS 동기화
+                        </button>
+                        <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={() => setActiveTab('add')}
+                        >
+                          + 단어 추가하기
+                        </button>
                       </div>
                     </div>
+                ) : studyMode === 'flashcard' ? (
+                    <>
+                      <div
+                          className="study-card clickable"
+                          onClick={() => setIsFlipped((prev) => !prev)}
+                      >
+                        <div className="card-top-row">
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span className="badge-state">
+                        {getStateLabel(currentItem.card.state)}
+                      </span>
+                            <span className="cat-badge">
+                        <FolderOpen size={11} />
+                              {normalizeCategory(currentItem.tag)}
+                      </span>
+                          </div>
+                          <button
+                              type="button"
+                              className="icon-circle-btn"
+                              aria-label="발음 듣기"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                speakWord(currentItem.word);
+                              }}
+                          >
+                            <Volume2 size={20} />
+                          </button>
+                        </div>
 
-                    {spellingResult && (
-                        <div className="rating-section">
-                          <p className="rating-guide">
-                            {spellingResult === 'correct'
-                                ? '체감 난이도를 선택하세요 (추천: 보통 또는 쉬움)'
-                                : '틀린 단어는 "다시"를 눌러 오늘 한 번 더 복습하세요'}
-                          </p>
-                          <div className="rating-grid">
-                            {ratingOptions.map((opt) => {
-                              const isRecommended =
-                                  (spellingResult === 'wrong' && opt.grade === Rating.Again) ||
-                                  (spellingResult === 'correct' && opt.grade === Rating.Good);
-                              return (
+                        <div className="card-center">
+                          <h2 className="word-display">{currentItem.word}</h2>
+                          {currentItem.phonetic && (
+                              <div className="phonetic-display">{currentItem.phonetic}</div>
+                          )}
+
+                          {isFlipped && (
+                              <>
+                                <div className="meaning-display">{currentItem.meaning}</div>
+                                {currentItem.example && (
+                                    <div className="example-box">{currentItem.example}</div>
+                                )}
+                              </>
+                          )}
+                        </div>
+
+                        <div className="flip-hint">
+                          <RotateCcw size={14} />
+                          {!isFlipped
+                              ? '카드를 터치해 품사별 뜻 · 반의어 · 예문/해석 보기'
+                              : '카드를 터치해 뜻 접기'}
+                        </div>
+                      </div>
+
+                      {isFlipped && (
+                          <div className="rating-section">
+                            <p className="rating-guide">기억난 정도를 선택하면 다음 복습일이 자동 계산됩니다</p>
+                            <div className="rating-grid">
+                              {ratingOptions.map((opt) => (
                                   <button
                                       key={opt.grade}
                                       type="button"
-                                      className={`rate-btn ${opt.className} ${
-                                          isRecommended ? 'recommended' : ''
-                                      }`}
+                                      className={`rate-btn ${opt.className}`}
                                       onClick={() => handleRate(opt.grade)}
                                   >
                                     <span className="rate-label">{opt.label}</span>
                                     <span className="rate-interval">{opt.intervalText}</span>
                                   </button>
-                              );
-                            })}
+                              ))}
+                            </div>
                           </div>
+                      )}
+                    </>
+                ) : (
+                    <>
+                      <div className="study-card">
+                        <div className="card-top-row">
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span className="badge-state">
+                        {getStateLabel(currentItem.card.state)}
+                      </span>
+                            <span className="cat-badge">
+                        <FolderOpen size={11} />
+                              {normalizeCategory(currentItem.tag)}
+                      </span>
+                          </div>
+                          <button
+                              type="button"
+                              className="icon-circle-btn"
+                              aria-label="발음 듣기"
+                              onClick={() => speakWord(currentItem.word)}
+                          >
+                            <Volume2 size={20} />
+                          </button>
                         </div>
-                    )}
-                  </>
-              )}
-            </>
+
+                        <div className="card-center">
+                          <div className="spelling-prompt-label">다음 뜻에 맞는 영어 스펠링을 입력하세요</div>
+                          <div className="meaning-display">{currentItem.meaning}</div>
+
+                          {!spellingResult && (
+                              <div className="spelling-helpers">
+                                <button
+                                    type="button"
+                                    className="helper-chip"
+                                    onClick={() => speakWord(currentItem.word)}
+                                >
+                                  <Volume2 size={14} />
+                                  발음 듣기
+                                </button>
+                                <button
+                                    type="button"
+                                    className="helper-chip"
+                                    onClick={() => setShowHint((prev) => !prev)}
+                                >
+                                  <HelpCircle size={14} />
+                                  {showHint ? '힌트 숨기기' : '첫 글자 힌트'}
+                                </button>
+                              </div>
+                          )}
+
+                          {showHint && !spellingResult && (
+                              <div className="hint-text">{getSpellingHint(currentItem.word)}</div>
+                          )}
+
+                          {!spellingResult ? (
+                              <form className="spelling-form" onSubmit={handleCheckSpelling}>
+                                <input
+                                    ref={spellingInputRef}
+                                    type="text"
+                                    className="spelling-input"
+                                    placeholder="영어 단어 입력..."
+                                    value={typedAnswer}
+                                    onChange={(e) => setTypedAnswer(e.target.value)}
+                                    autoCapitalize="none"
+                                    autoCorrect="off"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    enterKeyHint="done"
+                                />
+                                <button type="submit" className="submit-btn">
+                                  확인
+                                </button>
+                              </form>
+                          ) : (
+                              <div className={`spelling-feedback ${spellingResult}`}>
+                                <div className="feedback-badge">
+                                  {spellingResult === 'correct' ? (
+                                      <>
+                                        <Check size={18} />
+                                        정답입니다!
+                                      </>
+                                  ) : (
+                                      <>
+                                        <X size={18} />
+                                        스펠링을 다시 확인해 보세요
+                                      </>
+                                  )}
+                                </div>
+                                <div className="answer-compare">
+                                  {spellingResult === 'wrong' && (
+                                      <div>
+                                        입력한 답:{' '}
+                                        <span style={{ textDecoration: 'line-through' }}>{typedAnswer}</span>
+                                      </div>
+                                  )}
+                                  <div>
+                                    정답: <strong>{currentItem.word}</strong>{' '}
+                                    {currentItem.phonetic && <span>{currentItem.phonetic}</span>}
+                                  </div>
+                                </div>
+                                {currentItem.example && (
+                                    <div className="example-box">{currentItem.example}</div>
+                                )}
+                              </div>
+                          )}
+                        </div>
+
+                        <div className="flip-hint">
+                          {!spellingResult
+                              ? 'Enter 또는 확인 버튼을 눌러 채점하세요'
+                              : '아래에서 난이도를 선택해 다음 단어로 넘어가세요'}
+                        </div>
+                      </div>
+
+                      {spellingResult && (
+                          <div className="rating-section">
+                            <p className="rating-guide">
+                              {spellingResult === 'correct'
+                                  ? '체감 난이도를 선택하세요 (추천: 보통 또는 쉬움)'
+                                  : '틀린 단어는 "다시"를 눌러 오늘 한 번 더 복습하세요'}
+                            </p>
+                            <div className="rating-grid">
+                              {ratingOptions.map((opt) => {
+                                const isRecommended =
+                                    (spellingResult === 'wrong' && opt.grade === Rating.Again) ||
+                                    (spellingResult === 'correct' && opt.grade === Rating.Good);
+                                return (
+                                    <button
+                                        key={opt.grade}
+                                        type="button"
+                                        className={`rate-btn ${opt.className} ${
+                                            isRecommended ? 'recommended' : ''
+                                        }`}
+                                        onClick={() => handleRate(opt.grade)}
+                                    >
+                                      <span className="rate-label">{opt.label}</span>
+                                      <span className="rate-interval">{opt.intervalText}</span>
+                                    </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                      )}
+                    </>
+                )}
+              </div>
+            </div>
         )}
 
         {activeTab === 'add' && (
             <div className="panel-card">
-              {/* 저장할 학습장(카테고리) 선택 및 새 학습장 만들기 */}
               <div className="category-select-box">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span className="field-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span
+                  className="field-label"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              >
                 <FolderOpen size={14} />
-                저장할 학습장 분류
+                저장할 학습장 폴더 선택
               </span>
                   <button
                       type="button"
@@ -1069,7 +1241,7 @@ export function App() {
                       <input
                           type="text"
                           className="mini-input"
-                          placeholder="예: 학교 3단원, 학원 숙제..."
+                          placeholder="예: Unit 09, 능률보카 Day 1..."
                           value={newCategoryName}
                           onChange={(e) => setNewCategoryName(e.target.value)}
                       />
@@ -1103,7 +1275,7 @@ export function App() {
                     className={`sub-tab-btn ${addSubTab === 'camera' ? 'active' : ''}`}
                     onClick={() => setAddSubTab('camera')}
                 >
-                  사진 스캔
+                  사진 스캔 (여러 장 가능)
                 </button>
                 <button
                     type="button"
@@ -1143,13 +1315,14 @@ export function App() {
                     {showApiKeyEditor && (
                         <div className="api-key-box">
                           <div>
-                            Google AI Studio에서 발급받은 무료 <strong>Gemini API 키</strong>를 입력하면
-                            단어장 사진을 자동으로 인식합니다. (키는 현재 기기에만 저장됩니다)
+                            Google AI Studio에서 발급받은 <strong>Gemini API 키</strong>를 입력하면
+                            여러 장의 단어장 사진에서 발음기호·다중 뜻·예문/번역을 한 번에 추출합니다.
                           </div>
                           <div className="api-key-row">
                             <input
                                 type="password"
                                 className="mini-input"
+                                style={{ flex: 1 }}
                                 placeholder="AIzaSy..."
                                 value={apiKeyInput}
                                 onChange={(e) => setApiKeyInput(e.target.value)}
@@ -1157,7 +1330,7 @@ export function App() {
                             <button
                                 type="button"
                                 className="submit-btn"
-                                style={{ padding: '0 14px', fontSize: '0.82rem' }}
+                                style={{ padding: '7px 14px', fontSize: '0.82rem' }}
                                 onClick={handleSaveApiKey}
                             >
                               저장
@@ -1170,8 +1343,9 @@ export function App() {
                         ref={cameraInputRef}
                         type="file"
                         accept="image/*"
+                        multiple
                         style={{ display: 'none' }}
-                        onChange={handlePhotoSelected}
+                        onChange={handlePhotosSelected}
                     />
 
                     <button
@@ -1188,22 +1362,16 @@ export function App() {
                         }}
                     >
                       <Camera size={28} />
-                      <span>사진 찍기 또는 앨범에서 단어장 선택</span>
+                      <span>단어장 사진 찍기 또는 여러 장 한꺼번에 선택</span>
                       <span style={{ fontSize: '0.76rem', fontWeight: 500, opacity: 0.85 }}>
-                  교과서, 프린트, 단어장 페이지를 촬영하면 자동 추출됩니다
+                  3장짜리 유닛도 한 번에 선택하면 발음기호·품사별 뜻·반의어·예문·해석까지 모두 추출됩니다
                 </span>
                     </button>
-
-                    {ocrPreviewUrl && (
-                        <div className="ocr-preview-wrap">
-                          <img src={ocrPreviewUrl} alt="스캔 미리보기" className="ocr-preview-img" />
-                        </div>
-                    )}
 
                     {isExtracting && (
                         <div className="ocr-loading">
                           <Loader2 size={18} className="spin" />
-                          AI가 사진에서 영어 단어와 뜻을 추출하고 있습니다...
+                          AI가 선택한 사진들에서 단어·발음기호·다중 뜻·예문/번역을 추출하고 있습니다...
                         </div>
                     )}
 
@@ -1219,10 +1387,7 @@ export function App() {
                                 type="button"
                                 className="helper-chip"
                                 style={{ padding: '4px 8px', fontSize: '0.74rem' }}
-                                onClick={() => {
-                                  setExtractedDrafts([]);
-                                  setOcrPreviewUrl('');
-                                }}
+                                onClick={() => setExtractedDrafts([])}
                             >
                               초기화
                             </button>
@@ -1259,24 +1424,31 @@ export function App() {
                                       <input
                                           type="text"
                                           className="mini-input"
-                                          value={draft.meaning}
+                                          value={draft.phonetic}
                                           onChange={(e) =>
-                                              handleUpdateDraft(draft.id, 'meaning', e.target.value)
+                                              handleUpdateDraft(draft.id, 'phonetic', e.target.value)
                                           }
-                                          placeholder="한국어 뜻"
+                                          placeholder="발음기호 [ə́ːrli]"
                                       />
                                     </div>
-                                    {draft.example && (
-                                        <input
-                                            type="text"
-                                            className="mini-input"
-                                            value={draft.example}
-                                            onChange={(e) =>
-                                                handleUpdateDraft(draft.id, 'example', e.target.value)
-                                            }
-                                            placeholder="예문"
-                                        />
-                                    )}
+                                    <textarea
+                                        className="mini-input"
+                                        rows={2}
+                                        value={draft.meaning}
+                                        onChange={(e) =>
+                                            handleUpdateDraft(draft.id, 'meaning', e.target.value)
+                                        }
+                                        placeholder="한국어 뜻 / 반의어 / 파생어"
+                                    />
+                                    <textarea
+                                        className="mini-input"
+                                        rows={3}
+                                        value={draft.example}
+                                        onChange={(e) =>
+                                            handleUpdateDraft(draft.id, 'example', e.target.value)
+                                        }
+                                        placeholder="예문 및 한글 번역"
+                                    />
                                   </div>
                                 </div>
                             ))}
@@ -1287,7 +1459,7 @@ export function App() {
                               className="primary-full-btn"
                               onClick={handleSaveExtractedDrafts}
                           >
-                            선택한 {selectedDraftCount}개를 [{targetCategory}]에 저장하기
+                            선택한 {selectedDraftCount}개를 [{targetCategory}] 폴더에 한 번에 저장
                           </button>
                         </>
                     )}
@@ -1299,27 +1471,39 @@ export function App() {
                       onSubmit={handleAddSingle}
                       style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
                   >
-                    <div className="field-group">
-                      <label className="field-label">영어 단어 *</label>
-                      <input
-                          type="text"
-                          className="text-input"
-                          placeholder="예: curious"
-                          value={newWord}
-                          onChange={(e) => setNewWord(e.target.value)}
-                          autoCapitalize="none"
-                          autoCorrect="off"
-                          spellCheck={false}
-                          required
-                      />
+                    <div className="draft-input-grid">
+                      <div className="field-group">
+                        <label className="field-label">영어 단어 *</label>
+                        <input
+                            type="text"
+                            className="text-input"
+                            placeholder="예: early"
+                            value={newWord}
+                            onChange={(e) => setNewWord(e.target.value)}
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            spellCheck={false}
+                            required
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label className="field-label">발음기호 (선택)</label>
+                        <input
+                            type="text"
+                            className="text-input"
+                            placeholder="예: [ə́ːrli]"
+                            value={newPhonetic}
+                            onChange={(e) => setNewPhonetic(e.target.value)}
+                        />
+                      </div>
                     </div>
 
                     <div className="field-group">
-                      <label className="field-label">한국어 뜻 *</label>
-                      <input
-                          type="text"
-                          className="text-input"
-                          placeholder="예: 호기심 많은"
+                      <label className="field-label">한국어 뜻 · 반의어 · 파생어 (여러 줄 가능) *</label>
+                      <textarea
+                          className="bulk-textarea"
+                          style={{ minHeight: 80 }}
+                          placeholder={`(형) 이른\n(부) 일찍\n[반] late (형) 늦은 (부) 늦게`}
                           value={newMeaning}
                           onChange={(e) => setNewMeaning(e.target.value)}
                           required
@@ -1327,11 +1511,11 @@ export function App() {
                     </div>
 
                     <div className="field-group">
-                      <label className="field-label">예문 (선택)</label>
-                      <input
-                          type="text"
-                          className="text-input"
-                          placeholder="예: She is a curious girl."
+                      <label className="field-label">예문 및 한글 번역 (여러 줄 가능)</label>
+                      <textarea
+                          className="bulk-textarea"
+                          style={{ minHeight: 90 }}
+                          placeholder={`I often take walks in the early morning.\n나는 이른 아침에 자주 산책을 한다.`}
                           value={newExample}
                           onChange={(e) => setNewExample(e.target.value)}
                       />
@@ -1345,16 +1529,13 @@ export function App() {
 
               {addSubTab === 'bulk' && (
                   <>
-                    <div className="bulk-guide">
-                      한 줄에 한 단어씩 <strong>단어 - 뜻</strong> 또는 <strong>단어 : 뜻</strong> 형식으로
-                      붙여넣으세요. 예문은 <strong>|</strong> 뒤에 적으면 함께 저장됩니다.
-                      <br />
-                      예) <code>brave - 용감한 | The brave boy smiled.</code>
+                    <div style={{ fontSize: '0.8rem', color: '#64748b', lineHeight: 1.5 }}>
+                      한 줄에 한 단어씩 <strong>단어 - 뜻 | 예문</strong> 형식으로 붙여넣으세요.
                     </div>
 
                     <textarea
                         className="bulk-textarea"
-                        placeholder={`apple - 사과\nbrave : 용감한\ndiscover - 발견하다 | Scientists discover new stars.`}
+                        placeholder={`early - (형) 이른, (부) 일찍 | I often take walks in the early morning.`}
                         value={bulkText}
                         onChange={(e) => setBulkText(e.target.value)}
                         autoCapitalize="none"
@@ -1381,14 +1562,13 @@ export function App() {
                 </button>
               </div>
 
-              {/* 학습장별 목록 필터 */}
               <div className="category-strip">
                 <button
                     type="button"
                     className={`cat-chip ${listCategory === 'ALL' ? 'active' : ''}`}
                     onClick={() => setListCategory('ALL')}
                 >
-                  전체
+                  전체 ({items.length})
                 </button>
                 {allCategories.map((cat) => (
                     <button
@@ -1397,7 +1577,7 @@ export function App() {
                         className={`cat-chip ${listCategory === cat ? 'active' : ''}`}
                         onClick={() => setListCategory(cat)}
                     >
-                      {cat}
+                      {cat} ({totalCountByCategory.get(cat) || 0})
                     </button>
                 ))}
               </div>
@@ -1431,7 +1611,7 @@ export function App() {
                 <input
                     type="text"
                     className="search-input"
-                    placeholder="영어 단어 또는 뜻 검색..."
+                    placeholder="영어 단어, 뜻, 예문 검색..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                 />
@@ -1458,28 +1638,37 @@ export function App() {
                                       </option>
                                   ))}
                                 </select>
-                                <input
-                                    type="text"
-                                    className="text-input"
-                                    value={editWord}
-                                    onChange={(e) => setEditWord(e.target.value)}
-                                    placeholder="영어 단어"
-                                    autoCapitalize="none"
-                                    autoCorrect="off"
-                                />
-                                <input
-                                    type="text"
-                                    className="text-input"
+                                <div className="draft-input-grid">
+                                  <input
+                                      type="text"
+                                      className="text-input"
+                                      value={editWord}
+                                      onChange={(e) => setEditWord(e.target.value)}
+                                      placeholder="영어 단어"
+                                      autoCapitalize="none"
+                                      autoCorrect="off"
+                                  />
+                                  <input
+                                      type="text"
+                                      className="text-input"
+                                      value={editPhonetic}
+                                      onChange={(e) => setEditPhonetic(e.target.value)}
+                                      placeholder="발음기호 [ə́ːrli]"
+                                  />
+                                </div>
+                                <textarea
+                                    className="bulk-textarea"
+                                    style={{ minHeight: 75 }}
                                     value={editMeaning}
                                     onChange={(e) => setEditMeaning(e.target.value)}
-                                    placeholder="한국어 뜻"
+                                    placeholder="한국어 뜻 / 반의어 / 파생어"
                                 />
-                                <input
-                                    type="text"
-                                    className="text-input"
+                                <textarea
+                                    className="bulk-textarea"
+                                    style={{ minHeight: 85 }}
                                     value={editExample}
                                     onChange={(e) => setEditExample(e.target.value)}
-                                    placeholder="예문 (선택)"
+                                    placeholder="예문 및 한글 번역"
                                 />
                                 <div className="edit-actions">
                                   <button
@@ -1504,9 +1693,15 @@ export function App() {
                                 <div className="word-row-main">
                                   <div className="word-row-title">
                                     <span>{item.word}</span>
+                                    {item.phonetic && (
+                                        <span className="word-row-phonetic">{item.phonetic}</span>
+                                    )}
                                     <span className="cat-badge">{normalizeCategory(item.tag)}</span>
                                   </div>
                                   <div className="word-row-meaning">{item.meaning}</div>
+                                  {item.example && (
+                                      <div className="word-row-example">{item.example}</div>
+                                  )}
                                   <div className="word-row-meta">
                                     {getStateLabel(item.card.state)} · 다음 복습:{' '}
                                     {item.card.due.toLocaleDateString('ko-KR', {
