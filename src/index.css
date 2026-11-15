@@ -106,6 +106,20 @@ body {
     cursor: pointer;
 }
 
+.install-app-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--primary);
+    color: #ffffff;
+    border: none;
+    font-weight: 700;
+    font-size: 0.76rem;
+    padding: 6px 11px;
+    border-radius: 9px;
+    cursor: pointer;
+}
+
 /* 2-Column Layout */
 .study-layout {
     display: grid;
@@ -155,7 +169,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    max-height: 520px;
+    max-height: 460px;
     overflow-y: auto;
 }
 
@@ -274,15 +288,37 @@ body {
     min-width: 0;
 }
 
-/* GoGrinder Style Live Stats Banner (Image 3) */
+/* Bottom Collapsible Stats Section */
+.bottom-stats-wrap {
+    margin-top: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stats-toggle-btn {
+    align-self: center;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
 .gg-stats-banner {
     background: #f8fafc;
     border: 1px solid #cbd5e1;
     border-radius: 14px;
-    padding: 10px 14px;
+    padding: 12px 14px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
     text-align: center;
     font-size: 0.82rem;
     line-height: 1.45;
@@ -296,12 +332,12 @@ body {
 
 .gg-stats-line2 {
     font-weight: 800;
-    font-size: 0.88rem;
+    font-size: 0.86rem;
     color: #0f172a;
 }
 
 .gg-stats-line3 {
-    font-size: 0.76rem;
+    font-size: 0.75rem;
     color: #475569;
     font-weight: 600;
 }
@@ -358,6 +394,32 @@ body {
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
+}
+
+.speed-group {
+    display: inline-flex;
+    align-items: center;
+    background: var(--surface-sub);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 2px;
+    gap: 2px;
+}
+
+.speed-chip {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 4px 6px;
+    border-radius: 7px;
+    cursor: pointer;
+}
+
+.speed-chip.active {
+    background: var(--primary);
+    color: #ffffff;
 }
 
 .auto-audio-btn {
@@ -425,19 +487,6 @@ body {
     color: var(--primary);
 }
 
-.note-tag-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    font-size: 0.7rem;
-    font-weight: 800;
-    padding: 3px 8px;
-    border-radius: 7px;
-    background: #fef3c7;
-    color: #b45309;
-    border: 1px solid #fde68a;
-}
-
 .icon-circle-btn {
     width: 38px;
     height: 38px;
@@ -503,15 +552,6 @@ body {
     border-left: 3px solid var(--primary);
 }
 
-.card-tag-bar {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    flex-wrap: wrap;
-    margin-top: 8px;
-}
-
 .flip-hint {
     text-align: center;
     font-size: 0.76rem;
@@ -530,13 +570,6 @@ body {
     gap: 6px;
 }
 
-.rating-guide {
-    text-align: center;
-    font-size: 0.76rem;
-    color: var(--text-muted);
-    margin: 0;
-}
-
 .rating-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -552,10 +585,6 @@ body {
     align-items: center;
     gap: 2px;
     cursor: pointer;
-}
-
-.rate-btn.recommended {
-    border-color: currentColor;
 }
 
 .rate-label {
@@ -586,98 +615,7 @@ body {
     color: var(--easy-text);
 }
 
-/* 50 STREAK TOWER (Image 4) */
-.streak-tower-card {
-    background: #1a2234;
-    border: 2px solid #60a5fa;
-    border-radius: 16px;
-    padding: 16px;
-    color: #f8fafc;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.25);
-}
-
-.tower-header {
-    text-align: center;
-    border-bottom: 1px solid #334155;
-    padding-bottom: 10px;
-}
-
-.tower-title {
-    margin: 0;
-    font-size: 1.25rem;
-    font-weight: 900;
-    color: #7dd3fc;
-    letter-spacing: 0.04em;
-}
-
-.tower-subtitle {
-    margin: 6px 0 0;
-    font-size: 0.88rem;
-    font-weight: 800;
-    color: #ffffff;
-}
-
-.tower-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-}
-
-.tower-row {
-    display: grid;
-    grid-template-columns: repeat(10, 1fr);
-    gap: 5px;
-}
-
-.tower-cell {
-    height: 36px;
-    border-radius: 5px;
-    background: #263147;
-    border: 1px solid #334155;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.72rem;
-    font-weight: 800;
-    color: #64748b;
-    transition: all 0.2s ease;
-}
-
-.tower-cell.reached {
-    background: linear-gradient(135deg, #f59e0b, #fbbf24);
-    border-color: #fde68a;
-    color: #0f172a;
-    box-shadow: 0 0 10px rgba(251, 191, 36, 0.45);
-}
-
-.tower-cell.milestone.reached {
-    background: linear-gradient(135deg, #10b981, #34d399);
-    border-color: #a7f3d0;
-    color: #064e3b;
-}
-
-.tower-footer-bar {
-    background: #232e42;
-    border: 1px solid #334155;
-    border-radius: 8px;
-    padding: 9px 12px;
-    text-align: center;
-    font-weight: 800;
-    font-size: 0.88rem;
-}
-
-.tower-footer-bar.gold {
-    color: #facc15;
-}
-
-.tower-footer-bar.blue {
-    color: #60a5fa;
-}
-
-/* GoGrinder Selection & Tag Manager Modal (Image 2) */
+/* Folder Modal */
 .gg-modal-backdrop {
     position: fixed;
     inset: 0;
@@ -694,7 +632,7 @@ body {
     border: 2px solid #94a3b8;
     border-radius: 14px;
     width: 100%;
-    max-width: 760px;
+    max-width: 580px;
     max-height: 90dvh;
     overflow-y: auto;
     padding: 14px;
@@ -718,18 +656,6 @@ body {
     color: #0f172a;
 }
 
-.gg-grid {
-    display: grid;
-    grid-template-columns: 1.35fr 1fr;
-    gap: 12px;
-}
-
-@media (max-width: 640px) {
-    .gg-grid {
-        grid-template-columns: 1fr;
-    }
-}
-
 .gg-box {
     background: #ffffff;
     border: 1px solid #cbd5e1;
@@ -747,38 +673,12 @@ body {
 }
 
 .gg-tree-scroll {
-    height: 230px;
+    height: 250px;
     overflow-y: auto;
     border: 1px solid #cbd5e1;
     border-radius: 6px;
     padding: 6px;
     background: #ffffff;
-}
-
-.gg-tag-list {
-    height: 135px;
-    overflow-y: auto;
-    border: 1px solid #cbd5e1;
-    border-radius: 6px;
-    background: #ffffff;
-}
-
-.gg-tag-item {
-    width: 100%;
-    text-align: left;
-    border: none;
-    background: transparent;
-    padding: 6px 10px;
-    font-size: 0.82rem;
-    font-weight: 700;
-    cursor: pointer;
-    display: flex;
-    justify-content: space-between;
-}
-
-.gg-tag-item.active {
-    background: #dbeafe;
-    color: #1d4ed8;
 }
 
 .gg-summary-box {
@@ -850,12 +750,6 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-}
-
-.helper-chip.active {
-    background: #fef3c7;
-    border-color: #f59e0b;
-    color: #b45309;
 }
 
 .hint-text {

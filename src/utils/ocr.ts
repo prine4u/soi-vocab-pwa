@@ -1,17 +1,24 @@
+import { formatFolderSegment } from './storage';
+
 const GEMINI_KEY_STORAGE = 'soi_vocab_gemini_api_key_v1';
 const PRIMARY_MODEL = 'gemini-4-hydrogen';
 const FALLBACK_MODEL = 'gemini-3.8-flash';
 
 const SYSTEM_INSTRUCTION = `당신은 완벽주의 영어 교재 및 단어장 데이터 추출 전문가입니다.
-첨부된 단어장 이미지에서 학습할 영어 단어와 숙어를 빠짐없이 추출하세요.
+첨부된 단어장 이미지들에서 학습할 영어 단어와 숙어를 빠짐없이 추출하세요.
 
 [필수 추출 규칙]
-1. word (표제어): 문제 번호(01, 02 등)를 제외한 정확한 영어 단어 또는 숙어를 추출하세요. (하단 Self Check 체크박스 등 중복 항목은 제외)
-2. phonetic (발음기호): 단어 아래나 옆에 적힌 발음기호를 대괄호 포함 그대로 추출하세요 (예: "[ə́ːrli]", "[freʃ]"). 사진에 발음기호가 없으면 표준 IPA 발음기호를 생성해 채우세요.
-3. meaning (다중 품사·뜻·반의어·파생어·영영풀이 전체):
+1. unit (단원/섹터명):
+   - 각 단어가 속한 페이지 상단의 단원 이름(예: "Unit 09", "Unit 10", "Day 01")을 추출하세요.
+   - 여러 장의 사진에 서로 다른 유닛(예: Unit 10과 Unit 11)이 섞여 있다면 각 단어가 위치한 페이지의 유닛 이름을 정확히 구분해 적어주세요.
+   - 한 유닛이 여러 페이지(Basic, Intermediate 등)로 이어진 경우 세부 코너명 대신 대단원 이름(예: "Unit 09")으로 통일하세요.
+   - 영어 단어는 첫 글자만 대문자, 나머지는 소문자로 적고 숫자는 앞에 한 칸을 띄우세요 (예: "Unit 09", "Vocabulary Engine").
+2. word (표제어): 문제 번호(01, 02 등)를 제외한 정확한 영어 단어 또는 숙어를 추출하세요. (하단 Self Check 체크박스 등 중복 항목은 제외)
+3. phonetic (발음기호): 단어 아래나 옆에 적힌 발음기호를 대괄호 포함 그대로 추출하세요 (예: "[ə́ːrli]", "[freʃ]"). 사진에 발음기호가 없으면 표준 IPA 발음기호를 생성해 채우세요.
+4. meaning (다중 품사·뜻·반의어·파생어·영영풀이 전체):
    - 사진 가운데 칸에 적힌 모든 품사와 뜻(형용사, 부사, 동사, 명사 등)을 절대 자르지 말고 줄바꿈(\\n)으로 구분해 모두 적으세요.
    - 함께 적힌 반의어([반]), 유의어([유]), 파생어([파]), 관련어([관]), 영영풀이([영영])도 생략하지 말고 줄바꿈(\\n)으로 모두 포함하세요.
-4. example (모든 예문 + 한글 번역):
+5. example (모든 예문 + 한글 번역):
    - 오른쪽 칸에 예문이 2개 이상이거나 대화문(A/B)이면 1개만 적지 말고 모든 예문을 빠짐없이 추출하세요.
    - 각 영어 예문 바로 아랫줄에 사진에 적힌 한글 번역을 반드시 함께 적으세요. (사진에 한글 번역이 없다면 자연스러운 한글 번역을 직접 작성해 추가하세요.)`;
 
@@ -90,6 +97,7 @@ export async function resizeImageToBase64(
 }
 
 export interface RawExtractedItem {
+    unit?: string;
     word: string;
     phonetic?: string;
     meaning: string;
@@ -112,12 +120,13 @@ async function callGeminiVisionModel(
             items: {
                 type: 'OBJECT',
                 properties: {
+                    unit: { type: 'STRING' },
                     word: { type: 'STRING' },
                     phonetic: { type: 'STRING' },
                     meaning: { type: 'STRING' },
                     example: { type: 'STRING' },
                 },
-                required: ['word', 'phonetic', 'meaning', 'example'],
+                required: ['unit', 'word', 'phonetic', 'meaning', 'example'],
             },
         },
     };
@@ -130,7 +139,7 @@ async function callGeminiVisionModel(
 
     const parts: Array<Record<string, unknown>> = [
         {
-            text: `첨부된 ${images.length}장의 이미지에서 모든 영어 단어, 발음기호, 다중 품사/뜻/반의어/파생어, 모든 예문과 한글 번역을 빠짐없이 추출해 반환하세요.`,
+            text: `첨부된 ${images.length}장의 이미지에서 각 페이지의 단원명(unit), 영어 단어(word), 발음기호(phonetic), 다중 품사/뜻/반의어/파생어(meaning), 모든 예문과 한글 번역(example)을 빠짐없이 추출해 반환하세요.`,
         },
         ...images.map((img) => ({
             inlineData: {
@@ -198,6 +207,7 @@ export async function extractVocabFromImages(
     return parsed
         .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
         .map((item) => ({
+            unit: typeof item.unit === 'string' ? formatFolderSegment(item.unit) : '',
             word: typeof item.word === 'string' ? item.word.trim() : '',
             phonetic: typeof item.phonetic === 'string' ? item.phonetic.trim() : '',
             meaning: typeof item.meaning === 'string' ? item.meaning.trim() : '',

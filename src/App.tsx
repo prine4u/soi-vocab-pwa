@@ -25,7 +25,6 @@ import {
   Upload,
   Pencil,
   Flame,
-  Gauge,
   Camera,
   Folder,
   FolderOpen,
@@ -34,15 +33,14 @@ import {
   CheckSquare,
   Square,
   RefreshCw,
-
-
-// [변경 후: 위 구간을 아래 코드로 교체]
   Server,
   PanelLeftClose,
   PanelLeftOpen,
   Settings2,
   ChevronRight,
   ChevronDown,
+  BarChart2,
+  Smartphone,
 } from 'lucide-react';
 import type {
   VocabItem,
@@ -50,7 +48,6 @@ import type {
   AppTab,
   StudyStats,
   ExtractedVocabDraft,
-  SortOrder,
 } from './types';
 import {
   loadVocabItems,
@@ -63,11 +60,11 @@ import {
   parseImportedVocab,
   getDateKey,
   formatDateTime,
+  formatFolderSegment,
   normalizeCategory,
   loadCustomCategories,
   saveCustomCategories,
 } from './utils/storage';
-
 import {
   loadGeminiApiKey,
   saveGeminiApiKey,
@@ -86,10 +83,17 @@ interface FolderTreeNode {
   children: Array<{ fullPath: string; childName: string }>;
 }
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+const SPEECH_RATES = [0.5, 0.7, 0.8, 0.9, 1.0];
+
 function formatInterval(due: Date, now: Date): string {
   const diffMs = Math.max(0, due.getTime() - now.getTime());
   const diffMin = Math.round(diffMs / 60000);
-  if (diffMin < 1) return '1분 미만';
+  if (diffMin < 1) return '오늘 재복습';
   if (diffMin < 60) return `${diffMin}분 뒤`;
   const diffHours = Math.round(diffMin / 60);
   if (diffHours < 24) return `${diffHours}시간 뒤`;
@@ -119,31 +123,65 @@ function isCategoryMatch(itemTag: string | undefined, selectedFolder: string): b
   return norm === selectedFolder || norm.startsWith(`${selectedFolder}/`);
 }
 
+function resolveItemFolder(targetInput: string, detectedUnit?: string): string {
+  const raw = targetInput.trim();
+  const unitClean = detectedUnit ? formatFolderSegment(detectedUnit) : '';
+
+  if (!raw) {
+    return unitClean ? `Vocabulary/${unitClean}` : 'Vocabulary/Unit 01';
+  }
+
+  if (raw.includes('/')) {
+    const parts = raw.split('/');
+    const book = formatFolderSegment(parts[0]) || 'Vocabulary';
+    const rest = parts.slice(1).join('/').trim();
+    // 사용자가 "보카엔진/unit 10, unit 11"처럼 여러 유닛을 적었거나 비워둔 경우 AI 감지 유닛으로 자동 분리
+    if ((!rest || rest.includes(',')) && unitClean) {
+      return `${book}/${unitClean}`;
+    }
+    const sub = formatFolderSegment(rest);
+    return sub ? `${book}/${sub}` : book;
+  }
+
+  const formattedInput = formatFolderSegment(raw);
+  // 책 이름만 적은 경우 (예: "보카엔진") -> "보카엔진/Unit 10"으로 하위 폴더 자동 생성
+  if (unitClean && formattedInput.toLowerCase() !== unitClean.toLowerCase()) {
+    return `${formattedInput}/${unitClean}`;
+  }
+  return formattedInput;
+}
+
 export function App() {
   const [items, setItems] = useState<VocabItem[]>(() => loadVocabItems());
   const [customCategories, setCustomCategories] = useState<string[]>(() =>
       loadCustomCategories()
   );
-
-// [변경 후: 위 구간 전체를 아래 코드로 교체]
   const [stats, setStats] = useState<StudyStats>(() => loadStudyStats());
   const [activeTab, setActiveTab] = useState<AppTab>('study');
   const [studyMode, setStudyMode] = useState<StudyMode>('flashcard');
   const [autoSpeak, setAutoSpeak] = useState<boolean>(true);
   const [speechRate, setSpeechRate] = useState<number>(0.9);
-  const [isFolderSidebarOpen, setIsFolderSidebarOpen] = useState<boolean>(true);
+
+  // 3번 요청: 처음 진입 시 문제집 폴더 목록이 보이지 않도록 기본값 false 지정
+  const [isFolderSidebarOpen, setIsFolderSidebarOpen] = useState<boolean>(false);
+  // 4번 요청: 하단 통계글은 평소에 숨기고 버튼을 누를 때만 표시
+  const [showBottomStats, setShowBottomStats] = useState<boolean>(false);
   const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
 
-  // Folder, Sort, GoGrinder Modal states
+  // PWA 안드로이드 설치 프롬프트 상태
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(
+      null
+  );
+
+  // 폴더 및 관리 모달 상태
   const [studyCategory, setStudyCategory] = useState<string>('ALL');
   const [listCategory, setListCategory] = useState<string>('ALL');
-  const [targetCategory, setTargetCategory] = useState<string>('Vocabulary/Unit 09');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('order');
+  const [targetCategory, setTargetCategory] = useState<string>('Vocabulary Engine');
   const [showGgModal, setShowGgModal] = useState<boolean>(false);
   const [newParentFolder, setNewParentFolder] = useState<string>('');
   const [newChildFolder, setNewChildFolder] = useState<string>('');
 
-  // Card study & timer states
+  // 플래시카드 및 스펠링 상태
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
   const [typedAnswer, setTypedAnswer] = useState<string>('');
   const [spellingResult, setSpellingResult] = useState<'correct' | 'wrong' | null>(null);
@@ -151,7 +189,7 @@ export function App() {
   const cardStartTimeRef = useRef<number>(Date.now());
   const spellingInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Add word & OCR states
+  // 단어 추가 및 카메라 OCR 상태
   const [addSubTab, setAddSubTab] = useState<'camera' | 'single' | 'bulk'>('camera');
   const [newWord, setNewWord] = useState<string>('');
   const [newPhonetic, setNewPhonetic] = useState<string>('');
@@ -170,13 +208,13 @@ export function App() {
   const [extractedDrafts, setExtractedDrafts] = useState<ExtractedVocabDraft[]>([]);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
-  // NAS Sync states
+  // NAS 동기화 상태
   const [nasWebhookUrl, setNasWebhookUrl] = useState<string>(() => loadNasWebhookUrl());
   const [nasUrlInput, setNasUrlInput] = useState<string>(() => loadNasWebhookUrl());
   const [showNasConfig, setShowNasConfig] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // Word list filter & inline edit
+  // 단어 목록 검색 및 수정 상태
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editWord, setEditWord] = useState<string>('');
@@ -199,6 +237,23 @@ export function App() {
   useEffect(() => {
     saveStudyStats(stats);
   }, [stats]);
+
+  // 안드로이드 Chrome PWA 앱 설치 이벤트 감지
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallPwa = async () => {
+    if (!deferredPrompt) return;
+    await deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
+  };
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -244,8 +299,7 @@ export function App() {
   const selectedPoolItems = useMemo(() => {
     return items.filter((item) => isCategoryMatch(item.tag, studyCategory));
   }, [items, studyCategory]);
-  
-  // Selection statistics for GoGrinder modal
+
   const selectionMetrics = useMemo(() => {
     let wins = 0;
     let losses = 0;
@@ -261,25 +315,20 @@ export function App() {
     return { wins, attempts, rightPct, avgSec };
   }, [selectedPoolItems]);
 
+  // 8번 & 11번 해결: 방금 본 카드가 연속으로 또 나오지 않도록 lastSolvedAt 오름차순 + FSRS due 정렬
   const dueItems = useMemo(() => {
     const endOfToday = new Date().setHours(23, 59, 59, 999);
     const list = selectedPoolItems.filter((item) => item.card.due.getTime() <= endOfToday);
 
-    if (sortOrder === 'due') {
-      return [...list].sort((a, b) => a.card.due.getTime() - b.card.due.getTime());
-    }
-    if (sortOrder === 'wrong_rate') {
-      return [...list].sort((a, b) => {
-        const aLoss = a.itemStats?.losses || 0;
-        const bLoss = b.itemStats?.losses || 0;
-        return bLoss - aLoss;
-      });
-    }
-    if (sortOrder === 'random') {
-      return [...list].sort((a, b) => a.id.localeCompare(b.id));
-    }
-    return [...list].sort((a, b) => a.createdAt - b.createdAt);
-  }, [selectedPoolItems, sortOrder]);
+    return [...list].sort((a, b) => {
+      const aLast = a.itemStats?.lastSolvedAt || 0;
+      const bLast = b.itemStats?.lastSolvedAt || 0;
+      if (aLast !== bLast) {
+        return aLast - bLast; // 아직 안 본 카드(0)가 무조건 먼저 나오고, 방금 다시/어려움을 누른 카드는 맨 뒤로 이동
+      }
+      return a.card.due.getTime() - b.card.due.getTime();
+    });
+  }, [selectedPoolItems]);
 
   const currentItem = dueItems[0] ?? null;
 
@@ -323,10 +372,10 @@ export function App() {
     cardStartTimeRef.current = Date.now();
   };
 
-  // Folder CRUD (Create, Rename, Delete, Reset Stats)
+  // 폴더 생성/이름변경/삭제
   const handleAddFolderHierarchy = () => {
-    const p = newParentFolder.trim().replace(/\//g, '-');
-    const c = newChildFolder.trim().replace(/\//g, '-');
+    const p = formatFolderSegment(newParentFolder.replace(/\//g, ' '));
+    const c = formatFolderSegment(newChildFolder.replace(/\//g, ' '));
     if (!p && !c) return;
     const fullPath = p && c ? `${p}/${c}` : p || c;
     setCustomCategories((prev) => Array.from(new Set([...prev, fullPath])));
@@ -343,7 +392,7 @@ export function App() {
         'Unit 01'
     );
     if (!sub || !sub.trim()) return;
-    const fullPath = `${parentName}/${sub.trim().replace(/\//g, '-')}`;
+    const fullPath = normalizeCategory(`${parentName}/${sub.trim()}`);
     setCustomCategories((prev) => Array.from(new Set([...prev, fullPath])));
     setStudyCategory(fullPath);
     setTargetCategory(fullPath);
@@ -352,7 +401,7 @@ export function App() {
 
   const handleRenameFolder = (oldPath: string) => {
     const nextName = window.prompt(
-        `폴더 이름을 변경합니다.\n"상위폴더/하위폴더" 형식으로 입력하면 계층 구조로 자동 정리됩니다:`,
+        `폴더 이름을 변경합니다 ("상위폴더/하위폴더" 형식 입력 가능):`,
         oldPath
     );
     if (!nextName || !nextName.trim() || nextName.trim() === oldPath) return;
@@ -363,7 +412,7 @@ export function App() {
           const norm = normalizeCategory(item.tag);
           if (norm === oldPath) return { ...item, tag: cleaned };
           if (norm.startsWith(`${oldPath}/`)) {
-            return { ...item, tag: `${cleaned}/${norm.slice(oldPath.length + 1)}` };
+            return { ...item, tag: normalizeCategory(`${cleaned}/${norm.slice(oldPath.length + 1)}`) };
           }
           return item;
         })
@@ -372,14 +421,14 @@ export function App() {
         prev.map((cat) => {
           if (cat === oldPath) return cleaned;
           if (cat.startsWith(`${oldPath}/`)) {
-            return `${cleaned}/${cat.slice(oldPath.length + 1)}`;
+            return normalizeCategory(`${cleaned}/${cat.slice(oldPath.length + 1)}`);
           }
           return cat;
         })
     );
     if (studyCategory === oldPath) setStudyCategory(cleaned);
     if (targetCategory === oldPath) setTargetCategory(cleaned);
-    showToast(`✏️ [${oldPath}] → [${cleaned}] 폴더 이름이 변경되었습니다.`);
+    showToast(`✏️ [${oldPath}] → [${cleaned}] 변경 완료`);
   };
 
   const handleDeleteCategory = (folderPath: string) => {
@@ -401,7 +450,7 @@ export function App() {
 
   const handleResetFolderStats = () => {
     const label = studyCategory === 'ALL' ? '전체 단어장' : studyCategory;
-    if (!window.confirm(`[${label}]의 전적(승/패/연승/복습주기) 통계를 초기화하시겠습니까?`)) {
+    if (!window.confirm(`[${label}]의 학습 기록과 FSRS 복습 일정을 처음 상태로 초기화하시겠습니까?`)) {
       return;
     }
     const nowDate = new Date();
@@ -418,22 +467,37 @@ export function App() {
     );
     setStats((prev) => ({
       ...prev,
-      currentAnswerStreak: 0,
       todayReviewed: 0,
       todayCorrect: 0,
       todayWrong: 0,
     }));
-    showToast(`🔄 [${label}] 통계가 초기화되었습니다.`);
+    showToast(`🔄 [${label}] 통계 및 복습 일정이 초기화되었습니다.`);
   };
 
-// [변경 후: 위 구간을 아래 코드로 교체]
+  // 8번 & 11번: FSRS 평가 처리 (보통/쉬움은 최소 내일 이후로 졸업시켜 오늘 중복 출제 방지)
   const handleRate = (grade: Grade) => {
     if (!currentItem) return;
     const nowDate = new Date();
     const elapsedMs = Math.min(120000, Math.max(500, Date.now() - cardStartTimeRef.current));
     const record = scheduler.repeat(currentItem.card, nowDate)[grade];
+    const nextCard = { ...record.card };
 
-    // 오직 '쉬움(Rating.Easy)'을 선택했을 때만 승(Win), 나머지는 모두 패(Loss)
+    // 보통(Good) 또는 쉬움(Easy)을 누른 경우 오늘 다시 중복으로 나오지 않도록 최소 내일 자정 이후로 예약
+    if (grade === Rating.Good || grade === Rating.Easy) {
+      const tomorrowStart = new Date(
+          nowDate.getFullYear(),
+          nowDate.getMonth(),
+          nowDate.getDate() + 1,
+          4,
+          0,
+          0
+      );
+      if (nextCard.due.getTime() <= tomorrowStart.getTime()) {
+        nextCard.due = tomorrowStart;
+      }
+    }
+
+    // 승패 판정: 오직 '쉬움(Rating.Easy)'만 승(Win), 나머지는 패(Loss)
     const isWin =
         grade === Rating.Easy &&
         (studyMode !== 'spelling' || spellingResult === 'correct');
@@ -449,7 +513,7 @@ export function App() {
 
           return {
             ...item,
-            card: record.card,
+            card: nextCard,
             itemStats: {
               wins: prevStats.wins + (isWin ? 1 : 0),
               losses: prevStats.losses + (isWin ? 0 : 1),
@@ -474,7 +538,7 @@ export function App() {
     speakWord(currentItem.word);
   };
 
-  // NAS Sync
+  // NAS 동기화
   const handleSyncFromNas = async (
       silent: boolean = false,
       overrideUrl?: string,
@@ -491,10 +555,11 @@ export function App() {
           forceResync
       );
       if (newItems.length > 0) {
+        const formattedCats = newCategories.map((c) => normalizeCategory(c));
         setItems((prev) => [...newItems, ...prev]);
-        setCustomCategories((prev) => Array.from(new Set([...prev, ...newCategories])));
+        setCustomCategories((prev) => Array.from(new Set([...prev, ...formattedCats])));
         showToast(
-            `📥 NAS에서 새 단어 ${newItems.length}개(${newCategories.join(', ')})를 가져왔습니다!`
+            `📥 NAS에서 새 단어 ${newItems.length}개(${formattedCats.join(', ')})를 가져왔습니다!`
         );
       } else if (!silent) {
         showToast('NAS 동기화 완료! 새로 추가된 단어가 없습니다.');
@@ -536,7 +601,7 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Camera OCR & Add Word handlers
+  // 카메라 OCR 및 다중 유닛 자동 분리 저장
   const handleSaveApiKey = () => {
     saveGeminiApiKey(apiKeyInput);
     const saved = loadGeminiApiKey();
@@ -571,6 +636,7 @@ export function App() {
         setExtractedDrafts(
             extracted.map((item, idx) => ({
               id: `draft-${nowTs}-${idx}`,
+              unit: item.unit || '',
               word: item.word,
               phonetic: item.phonetic || '',
               meaning: item.meaning,
@@ -588,7 +654,7 @@ export function App() {
 
   const handleUpdateDraft = (
       id: string,
-      field: 'word' | 'phonetic' | 'meaning' | 'example' | 'selected',
+      field: 'unit' | 'word' | 'phonetic' | 'meaning' | 'example' | 'selected',
       value: string | boolean
   ) => {
     setExtractedDrafts((prev) =>
@@ -603,22 +669,28 @@ export function App() {
     if (selectedItems.length === 0) return;
 
     const nowTs = Date.now();
-    const normFolder = normalizeCategory(targetCategory);
-    const created = selectedItems.map((draft, idx) =>
-        createNewVocabItem(
-            draft.word,
-            draft.meaning,
-            draft.example,
-            new Date(nowTs + idx),
-            normFolder,
-            draft.phonetic
-        )
-    );
+    const createdFolders = new Set<string>();
 
-    setCustomCategories((prev) => Array.from(new Set([...prev, normFolder])));
+    const created = selectedItems.map((draft, idx) => {
+      const folderPath = resolveItemFolder(targetCategory, draft.unit);
+      createdFolders.add(folderPath);
+      return createNewVocabItem(
+          draft.word,
+          draft.meaning,
+          draft.example,
+          new Date(nowTs + idx),
+          folderPath,
+          draft.phonetic
+      );
+    });
+
+    const folderList = Array.from(createdFolders);
+    setCustomCategories((prev) => Array.from(new Set([...prev, ...folderList])));
     setItems((prev) => [...created, ...prev]);
     setExtractedDrafts([]);
-    showToast(`[${normFolder}] 폴더에 ${created.length}개 단어가 저장되었습니다.`);
+    showToast(
+        `📂 [${folderList.join(', ')}] 폴더에 총 ${created.length}개 단어가 분리 저장되었습니다.`
+    );
   };
 
   const handleAddSingle = (e: FormEvent) => {
@@ -682,7 +754,7 @@ export function App() {
   const handleExportJson = () => {
     const payload = {
       app: 'Soi Vocab',
-      version: 4,
+      version: 5,
       exportedAt: new Date().toISOString(),
       categories: allCategories,
       items: selectedPoolItems.length > 0 ? selectedPoolItems : items,
@@ -737,7 +809,6 @@ export function App() {
     });
   }, [items, searchQuery, listCategory]);
 
-  // Current Card Metrics (Image 3 style)
   const currentCardMetrics = useMemo(() => {
     const st = currentItem?.itemStats ?? createEmptyItemStats();
     const totalTries = st.wins + st.losses;
@@ -773,40 +844,34 @@ export function App() {
       ? [
         {
           grade: Rating.Again,
-          label: '다시',
+          label: '다시 (패)',
           className: 'rate-again',
-          intervalText: formatInterval(scheduling[Rating.Again].card.due, now),
+          intervalText: '오늘 끝부분 재복습',
         },
         {
           grade: Rating.Hard,
-          label: '어려움',
+          label: '어려움 (패)',
           className: 'rate-hard',
-          intervalText: formatInterval(scheduling[Rating.Hard].card.due, now),
+          intervalText: '오늘 끝부분 재복습',
         },
         {
           grade: Rating.Good,
-          label: '보통',
+          label: '보통 (패)',
           className: 'rate-good',
-          intervalText: formatInterval(scheduling[Rating.Good].card.due, now),
+          intervalText:
+              scheduling[Rating.Good].card.due.getTime() <=
+              new Date().setHours(23, 59, 59, 999)
+                  ? '1일 뒤'
+                  : formatInterval(scheduling[Rating.Good].card.due, now),
         },
         {
           grade: Rating.Easy,
-          label: '쉬움',
+          label: '쉬움 (승)',
           className: 'rate-easy',
           intervalText: formatInterval(scheduling[Rating.Easy].card.due, now),
         },
       ]
       : [];
-
-  // 50 Streak Tower calculation (Image 4: 5 rows from top [41..50] down to bottom [1..10])
-  const towerProgress = Math.min(50, stats.currentAnswerStreak || 0);
-  const towerRows = [
-    [41, 42, 43, 44, 45, 46, 47, 48, 49, 50],
-    [31, 32, 33, 34, 35, 36, 37, 38, 39, 40],
-    [21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
-    [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-  ];
 
   const allCounts = getFolderCounts('ALL');
 
@@ -815,9 +880,20 @@ export function App() {
         <header className="app-header">
           <div>
             <h1 className="app-title">Soi Vocab</h1>
-            <p className="app-subtitle">전체 {items.length}단어 · 계층형 단어장 & 50연승 타워</p>
+            <p className="app-subtitle">전체 {items.length}단어 · FSRS 망각곡선 단어장</p>
           </div>
           <div className="header-badges">
+            {deferredPrompt && (
+                <button
+                    type="button"
+                    className="install-app-btn"
+                    onClick={handleInstallPwa}
+                    title="안드로이드 홈 화면에 앱 설치"
+                >
+                  <Smartphone size={14} />
+                  앱 설치
+                </button>
+            )}
             <button
                 type="button"
                 className="gg-open-btn"
@@ -830,7 +906,7 @@ export function App() {
                 type="button"
                 className="mini-icon-btn"
                 onClick={() => setIsFolderSidebarOpen((prev) => !prev)}
-                title="폴더 트리 사이드바 열기/접기"
+                title={isFolderSidebarOpen ? '폴더 목록 닫기' : '폴더 목록 열기'}
             >
               {isFolderSidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
             </button>
@@ -852,9 +928,9 @@ export function App() {
                   <RefreshCw size={15} className={isSyncing ? 'spin' : ''} />
                 </button>
             )}
-            <div className="streak-pill" title="현재 연속 정답">
+            <div className="streak-pill" title="연속 학습일">
               <Flame size={14} />
-              {stats.currentAnswerStreak}연승
+              {stats.streak}일째
             </div>
             <div className="due-pill">남은 복습 {dueItems.length}</div>
           </div>
@@ -899,13 +975,13 @@ export function App() {
 
         {toastMsg && <div className="toast-banner">{toastMsg}</div>}
 
-        {/* 폴더 목록 & 통계 관리 모달 */}
+        {/* 폴더 목록 & 통계 관리 모달 (FSRS와 충돌하는 출제 순서 및 명예의 전당 제거됨) */}
         {showGgModal && (
             <div className="gg-modal-backdrop" onClick={() => setShowGgModal(false)}>
               <div className="gg-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="gg-modal-header">
               <span className="gg-modal-title">
-                ⚙️ 문제집 폴더 목록 & 통계 관리 (Current Selection)
+                ⚙️ 문제집 폴더 목록 & 학습 통계 관리
               </span>
                   <button
                       type="button"
@@ -916,198 +992,165 @@ export function App() {
                   </button>
                 </div>
 
-                <div className="gg-grid">
-                  {/* 왼쪽: 계층형 문제집 폴더 트리 편집 */}
-                  <div className="gg-box">
-                    <div className="gg-box-title">문제집 폴더 목록 (상위 책 / 하위 유닛)</div>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <input
-                          type="text"
-                          className="mini-input"
-                          placeholder="상위 폴더(책: 능률보카)"
-                          value={newParentFolder}
-                          onChange={(e) => setNewParentFolder(e.target.value)}
-                      />
-                      <input
-                          type="text"
-                          className="mini-input"
-                          placeholder="하위 폴더(Unit 09)"
-                          value={newChildFolder}
-                          onChange={(e) => setNewChildFolder(e.target.value)}
-                      />
-                      <button
-                          type="button"
-                          className="submit-btn"
-                          style={{ whiteSpace: 'nowrap', padding: '0 10px' }}
-                          onClick={handleAddFolderHierarchy}
-                      >
-                        + 생성
-                      </button>
-                    </div>
-
-                    <div className="gg-tree-scroll">
-                      <div className="folder-item-wrap">
-                        <button
-                            type="button"
-                            className={`folder-item ${studyCategory === 'ALL' ? 'active' : ''}`}
-                            onClick={() => setStudyCategory('ALL')}
-                        >
-                      <span className="folder-item-left">
-                        <FolderOpen size={15} />
-                        <span className="folder-name">전체 단어장 (All Problems)</span>
-                      </span>
-                          <span className="folder-count">
-                        {allCounts.due}/{allCounts.total}
-                      </span>
-                        </button>
-                      </div>
-
-                      {folderTree.map((group) => {
-                        const parentCounts = getFolderCounts(group.parent);
-                        const isParentSelected = studyCategory === group.parent;
-                        return (
-                            <div key={group.parent} className="folder-tree-group">
-                              <div className="folder-item-wrap">
-                                <button
-                                    type="button"
-                                    className={`folder-item ${isParentSelected ? 'active' : ''}`}
-                                    onClick={() => {
-                                      setStudyCategory(group.parent);
-                                      setTargetCategory(group.parent);
-                                    }}
-                                >
-                            <span className="folder-item-left">
-                              <FolderOpen size={15} />
-                              <span className="folder-name">★ {group.parent}</span>
-                            </span>
-                                  <span className="folder-count">
-                              {parentCounts.due}/{parentCounts.total}
-                            </span>
-                                </button>
-                                <button
-                                    type="button"
-                                    className="folder-action-btn"
-                                    title="하위 유닛 추가"
-                                    onClick={() => handleQuickAddSubfolder(group.parent)}
-                                >
-                                  <Plus size={13} />
-                                </button>
-                                <button
-                                    type="button"
-                                    className="folder-action-btn"
-                                    title="폴더 이름 변경"
-                                    onClick={() => handleRenameFolder(group.parent)}
-                                >
-                                  <Pencil size={13} />
-                                </button>
-                                <button
-                                    type="button"
-                                    className="folder-action-btn danger"
-                                    title="폴더 삭제"
-                                    onClick={() => handleDeleteCategory(group.parent)}
-                                >
-                                  <Trash2 size={13} />
-                                </button>
-                              </div>
-
-                              {group.children.length > 0 && (
-                                  <div className="folder-sub-list">
-                                    {group.children.map((child) => {
-                                      const childCounts = getFolderCounts(child.fullPath);
-                                      const isChildSelected = studyCategory === child.fullPath;
-                                      return (
-                                          <div key={child.fullPath} className="folder-item-wrap">
-                                            <button
-                                                type="button"
-                                                className={`folder-item ${isChildSelected ? 'active' : ''}`}
-                                                onClick={() => {
-                                                  setStudyCategory(child.fullPath);
-                                                  setTargetCategory(child.fullPath);
-                                                }}
-                                            >
-                                    <span className="folder-item-left">
-                                      <Folder size={13} />
-                                      <span className="folder-name">{child.childName}</span>
-                                    </span>
-                                              <span className="folder-count">
-                                      {childCounts.due}/{childCounts.total}
-                                    </span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="folder-action-btn"
-                                                title="유닛 이름/경로 변경"
-                                                onClick={() => handleRenameFolder(child.fullPath)}
-                                            >
-                                              <Pencil size={12} />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="folder-action-btn danger"
-                                                title="유닛 삭제"
-                                                onClick={() => handleDeleteCategory(child.fullPath)}
-                                            >
-                                              <Trash2 size={12} />
-                                            </button>
-                                          </div>
-                                      );
-                                    })}
-                                  </div>
-                              )}
-                            </div>
-                        );
-                      })}
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <button
-                          type="button"
-                          className="secondary-btn"
-                          onClick={handleResetFolderStats}
-                      >
-                        통계 초기화
-                      </button>
-                      <button
-                          type="button"
-                          className="secondary-btn"
-                          onClick={() =>
-                              window.alert(
-                                  `🏆 명예의 전당 (최고 기록)\n\n• 역대 최고 연승: ${stats.allTimeBestStreak}연승\n• 오늘 최고 연승: ${stats.todayBestStreak}연승\n• 연속 출석일: ${stats.streak}일째`
-                              )
-                          }
-                      >
-                        명예의 전당 (최고 기록)
-                      </button>
-                    </div>
+                <div className="gg-box">
+                  <div className="gg-box-title">문제집 폴더 목록 (상위 책 / 하위 유닛)</div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <input
+                        type="text"
+                        className="mini-input"
+                        placeholder="상위 폴더 (예: Vocabulary Engine)"
+                        value={newParentFolder}
+                        onChange={(e) => setNewParentFolder(e.target.value)}
+                    />
+                    <input
+                        type="text"
+                        className="mini-input"
+                        placeholder="하위 폴더 (예: Unit 10)"
+                        value={newChildFolder}
+                        onChange={(e) => setNewChildFolder(e.target.value)}
+                    />
+                    <button
+                        type="button"
+                        className="submit-btn"
+                        style={{ whiteSpace: 'nowrap', padding: '0 10px' }}
+                        onClick={handleAddFolderHierarchy}
+                    >
+                      + 생성
+                    </button>
                   </div>
 
-                  {/* 오른쪽: 출제 순서 설정 */}
-                  <div className="gg-box">
-                    <div className="gg-box-title">출제 순서 및 학습 설정</div>
-                    <div className="field-group">
-                      <label className="field-label">출제 순서:</label>
-                      <select
-                          className="select-input"
-                          value={sortOrder}
-                          onChange={(e) => setSortOrder(e.target.value as SortOrder)}
+                  <div className="gg-tree-scroll">
+                    <div className="folder-item-wrap">
+                      <button
+                          type="button"
+                          className={`folder-item ${studyCategory === 'ALL' ? 'active' : ''}`}
+                          onClick={() => setStudyCategory('ALL')}
                       >
-                        <option value="order">문제 번호 순서대로 (기본)</option>
-                        <option value="due">복습 시급한 순서대로</option>
-                        <option value="wrong_rate">오답(패) 많은 순서대로</option>
-                        <option value="random">무작위 섞기</option>
-                      </select>
+                    <span className="folder-item-left">
+                      <FolderOpen size={15} />
+                      <span className="folder-name">전체 단어장 (All Problems)</span>
+                    </span>
+                        <span className="folder-count">
+                      {allCounts.due}/{allCounts.total}
+                    </span>
+                      </button>
                     </div>
+
+                    {folderTree.map((group) => {
+                      const parentCounts = getFolderCounts(group.parent);
+                      const isParentSelected = studyCategory === group.parent;
+                      return (
+                          <div key={group.parent} className="folder-tree-group">
+                            <div className="folder-item-wrap">
+                              <button
+                                  type="button"
+                                  className={`folder-item ${isParentSelected ? 'active' : ''}`}
+                                  onClick={() => {
+                                    setStudyCategory(group.parent);
+                                    setTargetCategory(group.parent);
+                                  }}
+                              >
+                          <span className="folder-item-left">
+                            <FolderOpen size={15} />
+                            <span className="folder-name">★ {group.parent}</span>
+                          </span>
+                                <span className="folder-count">
+                            {parentCounts.due}/{parentCounts.total}
+                          </span>
+                              </button>
+                              <button
+                                  type="button"
+                                  className="folder-action-btn"
+                                  title="하위 유닛 추가"
+                                  onClick={() => handleQuickAddSubfolder(group.parent)}
+                              >
+                                <Plus size={13} />
+                              </button>
+                              <button
+                                  type="button"
+                                  className="folder-action-btn"
+                                  title="폴더 이름 변경"
+                                  onClick={() => handleRenameFolder(group.parent)}
+                              >
+                                <Pencil size={13} />
+                              </button>
+                              <button
+                                  type="button"
+                                  className="folder-action-btn danger"
+                                  title="폴더 삭제"
+                                  onClick={() => handleDeleteCategory(group.parent)}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+
+                            {group.children.length > 0 && (
+                                <div className="folder-sub-list">
+                                  {group.children.map((child) => {
+                                    const childCounts = getFolderCounts(child.fullPath);
+                                    const isChildSelected = studyCategory === child.fullPath;
+                                    return (
+                                        <div key={child.fullPath} className="folder-item-wrap">
+                                          <button
+                                              type="button"
+                                              className={`folder-item ${isChildSelected ? 'active' : ''}`}
+                                              onClick={() => {
+                                                setStudyCategory(child.fullPath);
+                                                setTargetCategory(child.fullPath);
+                                              }}
+                                          >
+                                  <span className="folder-item-left">
+                                    <Folder size={13} />
+                                    <span className="folder-name">{child.childName}</span>
+                                  </span>
+                                            <span className="folder-count">
+                                    {childCounts.due}/{childCounts.total}
+                                  </span>
+                                          </button>
+                                          <button
+                                              type="button"
+                                              className="folder-action-btn"
+                                              title="유닛 이름/경로 변경"
+                                              onClick={() => handleRenameFolder(child.fullPath)}
+                                          >
+                                            <Pencil size={12} />
+                                          </button>
+                                          <button
+                                              type="button"
+                                              className="folder-action-btn danger"
+                                              title="유닛 삭제"
+                                              onClick={() => handleDeleteCategory(child.fullPath)}
+                                          >
+                                            <Trash2 size={12} />
+                                          </button>
+                                        </div>
+                                    );
+                                  })}
+                                </div>
+                            )}
+                          </div>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <button
+                        type="button"
+                        className="secondary-btn"
+                        onClick={handleResetFolderStats}
+                    >
+                      선택 폴더 통계/일정 초기화
+                    </button>
                   </div>
                 </div>
 
-                {/* 하단 Current Selection 요약 박스 */}
                 <div className="gg-summary-box">
                   <div>
                     <div>
                       # Selected: {selectedPoolItems.length} / 총 {items.length}
                     </div>
                     <div>
-                      % Right: {selectionMetrics.rightPct}% ({selectionMetrics.wins} / 총{' '}
+                      % Right (쉬움 비율): {selectionMetrics.rightPct}% ({selectionMetrics.wins} / 총{' '}
                       {selectionMetrics.attempts})
                     </div>
                     <div>Avg. Time: {selectionMetrics.avgSec}s</div>
@@ -1131,7 +1174,6 @@ export function App() {
 
         {activeTab === 'study' && (
             <div className={`study-layout ${isFolderSidebarOpen ? '' : 'sidebar-collapsed'}`}>
-              {/* 카드 왼쪽 상위/하위 계층형 학습장 폴더 트리 */}
               {isFolderSidebarOpen && (
                   <aside className="folder-sidebar">
                     <div className="folder-sidebar-header">
@@ -1290,31 +1332,8 @@ export function App() {
                   </aside>
               )}
 
-              {/* 오른쪽 메인 학습 영역 */}
+              {/* 메인 학습 카드 영역 */}
               <div className="study-main">
-                {/* 실시간 오늘 공부량 & 이 문제 전적 배너 */}
-                <div className="gg-stats-banner">
-                  <div className="gg-stats-line1">
-                    [오늘 공부량] 총{' '}
-                    <span className="gg-blue">{stats.todayReviewed}문제</span> 풀이 (정답{' '}
-                    <span className="gg-green">{stats.todayCorrect}</span> / 오답{' '}
-                    <span className="gg-red">{stats.todayWrong}</span>)
-                  </div>
-                  <div className="gg-stats-line2">
-                    [이 문제 전적] 총 {currentCardMetrics.totalTries}전{' '}
-                    <span className="gg-green">{currentCardMetrics.wins}승</span>{' '}
-                    <span className="gg-red">{currentCardMetrics.losses}패</span> (통산{' '}
-                    {currentCardMetrics.winRate}%) &nbsp;|&nbsp; [최근{' '}
-                    {currentCardMetrics.recentCount}회]{' '}
-                    <span className="gg-green">{currentCardMetrics.recentStr}</span>
-                  </div>
-                  <div className="gg-stats-line3">
-                    평균 시간: {currentCardMetrics.avgSec}초 &nbsp;|&nbsp; 상태: ●{' '}
-                    {currentItem ? getStateLabel(currentItem.card.state) : '대기 중'}{' '}
-                    &nbsp;|&nbsp; 마지막 풀이: {currentCardMetrics.lastSolved}
-                  </div>
-                </div>
-
                 <div className="toolbar">
                   <div className="mode-switch">
                     <button
@@ -1341,19 +1360,23 @@ export function App() {
                     </button>
                   </div>
 
+                  {/* 6번 요청: TTS 속도 0.5, 0.7, 0.8, 0.9, 1.0배속 선택 */}
                   <div className="toolbar-actions">
-                    <button
-                        type="button"
-                        className={`auto-audio-btn ${speechRate < 0.8 ? 'on' : ''}`}
-                        onClick={() => {
-                          const nextRate = speechRate === 0.9 ? 0.65 : 0.9;
-                          setSpeechRate(nextRate);
-                          if (currentItem) speakWord(currentItem.word, nextRate);
-                        }}
-                    >
-                      <Gauge size={14} />
-                      {speechRate === 0.9 ? '0.9x' : '0.65x'}
-                    </button>
+                    <div className="speed-group" title="발음 읽어주기 속도">
+                      {SPEECH_RATES.map((r) => (
+                          <button
+                              key={r}
+                              type="button"
+                              className={`speed-chip ${speechRate === r ? 'active' : ''}`}
+                              onClick={() => {
+                                setSpeechRate(r);
+                                if (currentItem) speakWord(currentItem.word, r);
+                              }}
+                          >
+                            {r}x
+                          </button>
+                      ))}
+                    </div>
                     <button
                         type="button"
                         className={`auto-audio-btn ${autoSpeak ? 'on' : ''}`}
@@ -1371,11 +1394,11 @@ export function App() {
                         <Sparkles size={26} />
                       </div>
                       <h2 style={{ margin: '0 0 6px', fontSize: '1.15rem' }}>
-                        [{studyCategory === 'ALL' ? '전체 단어장' : studyCategory}] 학습 완료!
+                        [{studyCategory === 'ALL' ? '전체 단어장' : studyCategory}] 오늘 복습 완료!
                       </h2>
                       <p style={{ color: '#64748b', fontSize: '0.86rem', marginBottom: 16 }}>
-                        오늘 총 <strong>{stats.todayReviewed}문제</strong> (정답 {stats.todayCorrect} /
-                        오답 {stats.todayWrong}) 풀이를 마쳤습니다.
+                        오늘 총 <strong>{stats.todayReviewed}문제</strong> (쉬움 {stats.todayCorrect} /
+                        재학습 {stats.todayWrong}) 풀이를 마쳤습니다.
                       </p>
                       <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
                         {studyCategory !== 'ALL' && (
@@ -1390,9 +1413,9 @@ export function App() {
                         <button
                             type="button"
                             className="secondary-btn"
-                            onClick={() => setShowGgModal(true)}
+                            onClick={() => setIsFolderSidebarOpen(true)}
                         >
-                          ⚙️ 폴더/통계 초기화
+                          📂 다른 폴더 선택
                         </button>
                         <button
                             type="button"
@@ -1451,7 +1474,7 @@ export function App() {
                           <RotateCcw size={13} />
                           {!isFlipped
                               ? '카드를 터치해 품사별 뜻 · 반의어 · 예문/해석 보기'
-                              : '쉬움(승) 선택 시 연승 타워가 1칸 올라갑니다'}
+                              : '다시/어려움은 오늘 마지막에 다시 나오고, 보통/쉬움은 다음 복습일로 넘어갑니다'}
                         </div>
                       </div>
 
@@ -1548,12 +1571,12 @@ export function App() {
                                   {spellingResult === 'correct' ? (
                                       <>
                                         <Check size={18} />
-                                        정답입니다! (아래에서 쉬움 선택 시 +1 연승)
+                                        정답입니다!
                                       </>
                                   ) : (
                                       <>
                                         <X size={18} />
-                                        오답입니다 (연승 초기화)
+                                        스펠링을 다시 확인해 보세요
                                       </>
                                   )}
                                 </div>
@@ -1589,45 +1612,40 @@ export function App() {
                     </>
                 )}
 
-                {/* 50 STREAK TOWER */}
-                <div className="streak-tower-card">
-                  <div className="tower-header">
-                    <h3 className="tower-title">🏰 50 STREAK TOWER 🏰</h3>
-                    <p className="tower-subtitle">
-                      🎯 목표 달성도: {towerProgress} / 50 단계 (
-                      {Math.round((towerProgress / 50) * 100)}%)
-                    </p>
-                  </div>
+                {/* 4번 요청: 통계글은 제일 하단에 배치하고 버튼을 누를 때만 표시 */}
+                <div className="bottom-stats-wrap">
+                  <button
+                      type="button"
+                      className="stats-toggle-btn"
+                      onClick={() => setShowBottomStats((prev) => !prev)}
+                  >
+                    <BarChart2 size={14} />
+                    {showBottomStats ? '학습 통계 숨기기 ▲' : '상세 학습 통계 보기 ▼'}
+                  </button>
 
-                  <div className="tower-grid">
-                    {towerRows.map((row, rIdx) => (
-                        <div key={rIdx} className="tower-row">
-                          {row.map((stepNum) => {
-                            const isReached = towerProgress >= stepNum;
-                            const isMilestone = stepNum % 10 === 0;
-                            return (
-                                <div
-                                    key={stepNum}
-                                    className={`tower-cell ${isReached ? 'reached' : ''} ${
-                                        isMilestone ? 'milestone' : ''
-                                    }`}
-                                    title={`${stepNum}연승 단계`}
-                                >
-                                  {isMilestone || isReached ? stepNum : ''}
-                                </div>
-                            );
-                          })}
+                  {showBottomStats && (
+                      <div className="gg-stats-banner">
+                        <div className="gg-stats-line1">
+                          [오늘 공부량] 총{' '}
+                          <span className="gg-blue">{stats.todayReviewed}문제</span> 풀이 (쉬움{' '}
+                          <span className="gg-green">{stats.todayCorrect}</span> / 재복습{' '}
+                          <span className="gg-red">{stats.todayWrong}</span>)
                         </div>
-                    ))}
-                  </div>
-
-                  <div className="tower-footer-bar gold">
-                    🏆 오늘 최고 기록: {stats.todayBestStreak}연승 (역대 최고:{' '}
-                    {stats.allTimeBestStreak}연승)
-                  </div>
-                  <div className="tower-footer-bar blue">
-                    📊 오늘 풀이: {stats.todayReviewed}문제 (정답 {stats.todayCorrect})
-                  </div>
+                        <div className="gg-stats-line2">
+                          [이 문제 전적] 총 {currentCardMetrics.totalTries}전{' '}
+                          <span className="gg-green">{currentCardMetrics.wins}승</span>{' '}
+                          <span className="gg-red">{currentCardMetrics.losses}패</span> (통산{' '}
+                          {currentCardMetrics.winRate}%) &nbsp;|&nbsp; [최근{' '}
+                          {currentCardMetrics.recentCount}회]{' '}
+                          <span className="gg-green">{currentCardMetrics.recentStr}</span>
+                        </div>
+                        <div className="gg-stats-line3">
+                          평균 시간: {currentCardMetrics.avgSec}초 &nbsp;|&nbsp; 상태: ●{' '}
+                          {currentItem ? getStateLabel(currentItem.card.state) : '대기 중'}{' '}
+                          &nbsp;|&nbsp; 마지막 풀이: {currentCardMetrics.lastSolved}
+                        </div>
+                      </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1638,7 +1656,7 @@ export function App() {
               <div className="category-select-box">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span className="field-label">
-                📁 저장할 상위/하위 폴더 경로 (예: Vocabulary/Unit 09)
+                📁 책 제목 또는 상위/하위 폴더 (책 제목만 적어도 사진 속 Unit별로 자동 분리됩니다)
               </span>
                   <button
                       type="button"
@@ -1651,7 +1669,7 @@ export function App() {
                 <input
                     type="text"
                     className="text-input"
-                    placeholder="상위폴더/하위폴더 (예: 능률보카/Unit 09)"
+                    placeholder="예: 보카엔진 또는 Vocabulary Engine/Unit 10"
                     value={targetCategory}
                     onChange={(e) => setTargetCategory(e.target.value)}
                     list="folder-suggestions"
@@ -1669,7 +1687,7 @@ export function App() {
                     className={`sub-tab-btn ${addSubTab === 'camera' ? 'active' : ''}`}
                     onClick={() => setAddSubTab('camera')}
                 >
-                  사진 스캔 (여러 장)
+                  사진 스캔 (유닛 자동분리)
                 </button>
                 <button
                     type="button"
@@ -1737,13 +1755,16 @@ export function App() {
                         onClick={() => cameraInputRef.current?.click()}
                     >
                       <Camera size={26} />
-                      <span>단어장 사진 찍기 또는 여러 장 한꺼번에 선택</span>
+                      <span>단어장 사진 찍기 또는 여러 유닛 한꺼번에 선택</span>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 500, opacity: 0.85 }}>
+                  Unit 10, Unit 11 사진을 한 번에 올려도 각 유닛 하위 폴더로 자동 분리됩니다
+                </span>
                     </button>
 
                     {isExtracting && (
                         <div className="ocr-loading">
                           <Loader2 size={18} className="spin" />
-                          AI가 발음기호·품사별 뜻·반의어·예문/번역을 추출하고 있습니다...
+                          AI가 페이지별 유닛(Unit)과 발음기호·뜻·예문/번역을 추출하고 있습니다...
                         </div>
                     )}
 
@@ -1772,6 +1793,7 @@ export function App() {
                                           type="text"
                                           className="mini-input"
                                           value={draft.word}
+                                          placeholder="단어"
                                           onChange={(e) =>
                                               handleUpdateDraft(draft.id, 'word', e.target.value)
                                           }
@@ -1779,12 +1801,22 @@ export function App() {
                                       <input
                                           type="text"
                                           className="mini-input"
-                                          value={draft.phonetic}
+                                          value={draft.unit || ''}
+                                          placeholder="하위 유닛 (예: Unit 10)"
                                           onChange={(e) =>
-                                              handleUpdateDraft(draft.id, 'phonetic', e.target.value)
+                                              handleUpdateDraft(draft.id, 'unit', e.target.value)
                                           }
                                       />
                                     </div>
+                                    <input
+                                        type="text"
+                                        className="mini-input"
+                                        value={draft.phonetic}
+                                        placeholder="발음기호"
+                                        onChange={(e) =>
+                                            handleUpdateDraft(draft.id, 'phonetic', e.target.value)
+                                        }
+                                    />
                                     <textarea
                                         className="mini-input"
                                         rows={2}
@@ -1810,7 +1842,7 @@ export function App() {
                               className="primary-full-btn"
                               onClick={handleSaveExtractedDrafts}
                           >
-                            [{targetCategory}] 폴더에 한 번에 저장
+                            유닛별 하위 폴더로 자동 분리하여 저장
                           </button>
                         </>
                     )}
@@ -1853,7 +1885,7 @@ export function App() {
                         onChange={(e) => setNewExample(e.target.value)}
                     />
                     <button type="submit" className="primary-full-btn">
-                      [{targetCategory}]에 추가하기
+                      [{normalizeCategory(targetCategory)}]에 추가하기
                     </button>
                   </form>
               )}
@@ -1867,7 +1899,7 @@ export function App() {
                   onChange={(e) => setBulkText(e.target.value)}
               />
                     <button type="button" className="primary-full-btn" onClick={handleAddBulk}>
-                      [{targetCategory}]에 일괄 등록하기
+                      [{normalizeCategory(targetCategory)}]에 일괄 등록하기
                     </button>
                   </>
               )}
@@ -2019,7 +2051,11 @@ export function App() {
                               )}
                               <div className="word-row-meta">
                                 전적: {item.itemStats?.wins || 0}승 {item.itemStats?.losses || 0}패 ·
-                                마지막 풀이: {formatDateTime(item.itemStats?.lastSolvedAt)}
+                                다음 복습:{' '}
+                                {item.card.due.toLocaleDateString('ko-KR', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                })}
                               </div>
                             </div>
                             <div className="row-actions">

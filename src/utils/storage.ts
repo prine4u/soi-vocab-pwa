@@ -4,10 +4,8 @@ import type { VocabItem, StudyStats, VocabItemStats } from '../types';
 const STORAGE_KEY = 'soi_vocab_items_v1';
 const STATS_KEY = 'soi_vocab_stats_v1';
 const CATEGORIES_KEY = 'soi_vocab_categories_v1';
-const NOTE_TAGS_KEY = 'soi_vocab_note_tags_v1';
 
-export const DEFAULT_CATEGORY = ' 미분류 단어장';
-const DEFAULT_NOTE_TAGS = ['신기 방기', '억까', '오답', '이상함.......'];
+export const DEFAULT_CATEGORY = 'Vocabulary/Unit 01';
 
 export function getDateKey(date: Date = new Date()): string {
     const y = date.getFullYear();
@@ -27,9 +25,38 @@ export function formatDateTime(ts?: number): string {
     return `${y}-${m}-${day} ${hh}:${mm}`;
 }
 
+/**
+ * 단어마다 첫 글자 대문자 + 그다음 소문자 + 숫자 앞 한 칸 띄어쓰기 + 한 자리 유닛 번호 0 채우기
+ * 예: "unit9" -> "Unit 09", "vocabulary engine" -> "Vocabulary Engine"
+ */
+export function formatFolderSegment(raw: string): string {
+    let s = raw.trim();
+    if (!s) return '';
+    // 영문/한글과 숫자 사이 공백 한 칸 자동 삽입
+    s = s.replace(/([A-Za-z가-힣])(\d)/g, '$1 $2').replace(/(\d)([A-Za-z가-힣])/g, '$1 $2');
+    s = s.replace(/\s+/g, ' ');
+    // 영어 단어 Title Case 변환
+    s = s.replace(/[A-Za-z]+/g, (word) => {
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    });
+    // Unit 9 -> Unit 09 형태 보정
+    s = s.replace(
+        /\b(Unit|Day|Part|Chapter|Lesson)\s+(\d)\b/gi,
+        (_, prefix: string, digit: string) =>
+            `${prefix.charAt(0).toUpperCase() + prefix.slice(1).toLowerCase()} 0${digit}`
+    );
+    return s.trim();
+}
+
 export function normalizeCategory(tag?: string): string {
     const trimmed = tag?.trim().replace(/^\/+|\/+$/g, '');
-    return trimmed && trimmed.length > 0 ? trimmed : '단어장';
+    if (!trimmed) return DEFAULT_CATEGORY;
+    const formatted = trimmed
+        .split('/')
+        .map((part) => formatFolderSegment(part))
+        .filter(Boolean)
+        .join('/');
+    return formatted || DEFAULT_CATEGORY;
 }
 
 export function createEmptyItemStats(): VocabItemStats {
@@ -56,7 +83,6 @@ export function createNewVocabItem(
         meaning: meaning.trim(),
         example: example?.trim() || undefined,
         tag: normalizeCategory(tag),
-        customTags: [],
         itemStats: createEmptyItemStats(),
         card: createEmptyCard(now),
         createdAt: now.getTime(),
@@ -84,7 +110,6 @@ export function loadVocabItems(): VocabItem[] {
             ...item,
             phonetic: item.phonetic?.trim() || undefined,
             tag: normalizeCategory(item.tag),
-            customTags: Array.isArray(item.customTags) ? item.customTags : [],
             itemStats: item.itemStats
                 ? {
                     wins: item.itemStats.wins || 0,
@@ -128,29 +153,11 @@ export function loadCustomCategories(): string[] {
 export function saveCustomCategories(categories: string[]): void {
     const set = new Set<string>();
     categories.forEach((c) => {
-        if (c.trim()) set.add(normalizeCategory(c));
+        if (c.trim() && c.trim() !== '기본 학습장') {
+            set.add(normalizeCategory(c));
+        }
     });
     localStorage.setItem(CATEGORIES_KEY, JSON.stringify(Array.from(set)));
-}
-
-export function loadCustomNoteTags(): string[] {
-    try {
-        const raw = localStorage.getItem(NOTE_TAGS_KEY);
-        if (!raw) return DEFAULT_NOTE_TAGS;
-        const parsed = JSON.parse(raw) as unknown;
-        if (!Array.isArray(parsed)) return DEFAULT_NOTE_TAGS;
-        return parsed.filter((t): t is string => typeof t === 'string' && t.trim().length > 0);
-    } catch {
-        return DEFAULT_NOTE_TAGS;
-    }
-}
-
-export function saveCustomNoteTags(tags: string[]): void {
-    localStorage.setItem(NOTE_TAGS_KEY, JSON.stringify(Array.from(new Set(tags))));
-}
-
-export function getSampleItems(): VocabItem[] {
-    return [];
 }
 
 export function loadStudyStats(): StudyStats {
@@ -169,9 +176,6 @@ export function loadStudyStats(): StudyStats {
                 todayReviewed: 0,
                 todayCorrect: 0,
                 todayWrong: 0,
-                currentAnswerStreak: 0,
-                todayBestStreak: 0,
-                allTimeBestStreak: 0,
             };
         }
         const parsed = JSON.parse(raw) as Partial<StudyStats>;
@@ -186,9 +190,6 @@ export function loadStudyStats(): StudyStats {
             todayReviewed: isToday ? parsed.todayReviewed || 0 : 0,
             todayCorrect: isToday ? parsed.todayCorrect || 0 : 0,
             todayWrong: isToday ? parsed.todayWrong || 0 : 0,
-            currentAnswerStreak: parsed.currentAnswerStreak || 0,
-            todayBestStreak: isToday ? parsed.todayBestStreak || 0 : 0,
-            allTimeBestStreak: parsed.allTimeBestStreak || 0,
         };
     } catch {
         return {
@@ -198,9 +199,6 @@ export function loadStudyStats(): StudyStats {
             todayReviewed: 0,
             todayCorrect: 0,
             todayWrong: 0,
-            currentAnswerStreak: 0,
-            todayBestStreak: 0,
-            allTimeBestStreak: 0,
         };
     }
 }
@@ -225,11 +223,6 @@ export function recordAnswerStats(prev: StudyStats, isCorrect: boolean): StudySt
         streak = prev.lastStudyDate === yesterday ? prev.streak + 1 : 1;
     }
 
-    const nextAnswerStreak = isCorrect ? (prev.currentAnswerStreak || 0) + 1 : 0;
-    const prevTodayBest = isSameDay ? prev.todayBestStreak || 0 : 0;
-    const todayBestStreak = Math.max(prevTodayBest, nextAnswerStreak);
-    const allTimeBestStreak = Math.max(prev.allTimeBestStreak || 0, todayBestStreak);
-
     return {
         streak,
         lastStudyDate: today,
@@ -237,14 +230,7 @@ export function recordAnswerStats(prev: StudyStats, isCorrect: boolean): StudySt
         todayReviewed,
         todayCorrect,
         todayWrong,
-        currentAnswerStreak: nextAnswerStreak,
-        todayBestStreak,
-        allTimeBestStreak,
     };
-}
-
-export function incrementTodayReview(prev: StudyStats): StudyStats {
-    return recordAnswerStats(prev, true);
 }
 
 export function parseImportedVocab(jsonText: string): VocabItem[] {
@@ -284,7 +270,6 @@ export function parseImportedVocab(jsonText: string): VocabItem[] {
             example:
                 typeof obj.example === 'string' && obj.example.trim() ? obj.example.trim() : undefined,
             tag: normalizeCategory(typeof obj.tag === 'string' ? obj.tag : undefined),
-            customTags: Array.isArray(obj.customTags) ? obj.customTags : [],
             itemStats: obj.itemStats ?? createEmptyItemStats(),
             card: hydrateCard(obj.card),
             createdAt: typeof obj.createdAt === 'number' ? obj.createdAt : now + idx,
