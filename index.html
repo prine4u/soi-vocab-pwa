@@ -1,18 +1,26 @@
 <!doctype html>
 <html lang="ko">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>소이 영단어</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <title>소이의 영단어</title>
 
-  <!-- iOS PWA 전용 설정 (홈 화면 추가 시 주소창 제거 및 앱 모드 실행) -->
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="apple-mobile-web-app-title" content="소이 영단어" />
-  <link rel="apple-touch-icon" href="/icon-192.png" />
-</head>
-<body class="bg-slate-50 text-slate-900 select-none">
-<div id="root"></div>
-<script type="module" src="/src/main.tsx"></script>
-</body>
+    <!-- PWA Manifest 및 아이콘 설정 -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- iOS Safari 독립 앱(전체화면) 실행 설정 -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Soi Vocab" />
+    <meta name="theme-color" content="#4f46e5" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
