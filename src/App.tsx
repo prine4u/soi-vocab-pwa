@@ -1368,7 +1368,7 @@ export function App() {
   return (
       <div className="app-shell">
         {/* 심플하고 현대적인 상단 헤더 */}
-        // [변경 후: 제목 옆 FSRS 버튼 및 상세 가이드 팝업 모달 추가]
+        
         <header className="app-header">
           <div>
             <div className="title-row">
