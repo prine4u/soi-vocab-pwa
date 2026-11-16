@@ -200,8 +200,10 @@ export function App() {
   const [cramQueueIds, setCramQueueIds] = useState<string[]>([]);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
 
-
+  
   const [showBottomStats, setShowBottomStats] = useState<boolean>(false);
+  const [showFsrsModal, setShowFsrsModal] = useState<boolean>(false);  
+  
   const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
 
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(
@@ -1366,9 +1368,20 @@ export function App() {
   return (
       <div className="app-shell">
         {/* 심플하고 현대적인 상단 헤더 */}
+        // [변경 후: 제목 옆 FSRS 버튼 및 상세 가이드 팝업 모달 추가]
         <header className="app-header">
           <div>
-            <h1 className="app-title">소이의 단어 암기장</h1>
+            <div className="title-row">
+              <h1 className="app-title">소이의 단어 암기장</h1>
+              <button
+                  type="button"
+                  className="fsrs-info-btn"
+                  onClick={() => setShowFsrsModal(true)}
+              >
+                <Sparkles size={13} />
+                FSRS 암기법이란?
+              </button>
+            </div>
             <div className="header-meta-row">
             <span className="streak-pill" title="연속 학습 일수">
               <Flame size={12} />
@@ -1415,6 +1428,84 @@ export function App() {
 
         {toastMsg && <div className="toast-banner">{toastMsg}</div>}
 
+        {/* FSRS 과학적 암기법 상세 설명 팝업 모달 */}
+        {showFsrsModal && (
+            <div className="gg-modal-backdrop" onClick={() => setShowFsrsModal(false)}>
+              <div className="gg-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="gg-modal-header">
+              <span className="gg-modal-title">
+                <Sparkles size={18} color="#4f46e5" />
+                FSRS 망각곡선 암기법이란 무엇인가요?
+              </span>
+                  <button
+                      type="button"
+                      className="mini-icon-btn"
+                      onClick={() => setShowFsrsModal(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="fsrs-guide-box">
+                  <h4>🧠 1. 뇌과학과 AI가 결합된 차세대 기억 알고리즘</h4>
+                  <div>
+                    사람의 뇌는 새로운 영단어를 외운 뒤 <strong>1시간이 지나면 50%, 하루가 지나면 70%</strong>를
+                    잊어버립니다(에빙하우스의 망각곡선). 하지만 <strong>&ldquo;잊어버리기 바로 직전의 골든타임&rdquo;</strong>에
+                    단어를 다시 떠올리면, 뇌는 그 단어를 <strong>평생 가는 장기 기억</strong>으로 전환합니다.
+                    <br />
+                    <strong>FSRS(Free Spaced Repetition Scheduler)</strong>는 수억 건의 실제 암기 데이터를 학습해,
+                    소이가 단어마다 언제 복습해야 가장 적은 노력으로 오래 기억할 수 있는지 계산해 주는 최신 알고리즘입니다.
+                  </div>
+                </div>
+
+                <div className="fsrs-guide-box">
+                  <h4>💡 2. 왜 일반 단어장 대신 FSRS 공부법을 해야 할까요?</h4>
+                  <ul className="fsrs-effect-list">
+                    <li>
+                      <strong>다 아는 단어를 또 보는 시간 낭비 제거:</strong> 종이 단어장을 처음부터 끝까지 읽으면
+                      이미 완벽히 아는 단어에 시간의 70%를 낭비하게 됩니다. FSRS는 쉬운 단어는 <strong>4일 뒤 → 14일 뒤 → 한 달 뒤</strong>로
+                      멀리 보내고, 오늘 꼭 봐야 할 단어만 뽑아줍니다.
+                    </li>
+                    <li>
+                      <strong>공부 시간은 절반으로, 암기량은 2배로:</strong> 연구 결과 일반 반복 학습 대비
+                      <strong> 학습 시간을 35~50% 단축</strong>하면서도 기억 유지율은 <strong>90% 이상</strong>으로 유지됩니다.
+                    </li>
+                    <li>
+                      <strong>소이에게 맞춘 개인별 난이도 자동 조절:</strong> 헷갈리는 단어는 <code>다시</code>나{' '}
+                      <code>어려움</code>을 누르면 오늘 끝부분과 내일 다시 나타나 완벽히 외울 때까지 도와줍니다.
+                    </li>
+                  </ul>
+                </div>
+
+                <div className="fsrs-guide-box">
+                  <h4>🚀 3. 소이를 위한 100% 활용 꿀팁!</h4>
+                  <ul className="fsrs-effect-list">
+                    <li>
+                      <strong>1단계 (눈과 귀로 익히기):</strong> 카드를 보기만 하지 말고 원어민 발음과 영어 예문을 귀로 들으며 뜻을 확인하세요.
+                    </li>
+                    <li>
+                      <strong>2단계 (솔직하게 버튼 누르기):</strong> 바로 떠오르면 <strong>쉬움/보통</strong>, 3초 이상 고민했거나 틀렸다면 주저 없이 <strong>다시/어려움</strong>을 눌러주세요.
+                    </li>
+                    <li>
+                      <strong>3단계 (스펠링 & 벼락치기):</strong> 학원 시험 전날에는 <strong>스펠링 테스트</strong>와 <strong>⚡ 자유 복습(벼락치기)</strong>으로 완벽하게 마무리하세요!
+                    </li>
+                  </ul>
+                </div>
+
+                <button
+                    type="button"
+                    className="primary-full-btn"
+                    onClick={() => setShowFsrsModal(false)}
+                >
+                  이해했어요! 오늘 복습 시작하기
+                </button>
+              </div>
+            </div>
+        )}
+
+        {toastMsg && <div className="toast-banner">{toastMsg}</div>}
+        
+        
         {/* 1. 문제집 폴더 선택 & 순서/이름 관리 모달 */}
         {showGgModal && (
             <div className="gg-modal-backdrop" onClick={() => setShowGgModal(false)}>
