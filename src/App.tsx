@@ -35,8 +35,6 @@ import {
   Square,
   RefreshCw,
   Server,
-  PanelLeftClose,
-  PanelLeftOpen,
   Settings2,
   ChevronRight,
   ChevronDown,
@@ -202,7 +200,7 @@ export function App() {
   const [cramQueueIds, setCramQueueIds] = useState<string[]>([]);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
 
-  const [isFolderSidebarOpen, setIsFolderSidebarOpen] = useState<boolean>(false);
+
   const [showBottomStats, setShowBottomStats] = useState<boolean>(false);
   const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
 
@@ -243,8 +241,8 @@ export function App() {
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
   const [nasWebhookUrl, setNasWebhookUrl] = useState<string>(() => loadNasWebhookUrl());
+
   const [nasUrlInput, setNasUrlInput] = useState<string>(() => loadNasWebhookUrl());
-  const [showNasConfig, setShowNasConfig] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -1042,11 +1040,11 @@ export function App() {
     }
   };
 
+
   const handleSaveNasWebhook = () => {
     saveNasWebhookUrl(nasUrlInput);
     const saved = loadNasWebhookUrl();
     setNasWebhookUrl(saved);
-    setShowNasConfig(false);
     if (saved) {
       showToast('NAS n8n 웹훅 주소가 저장되었습니다.');
       handleSyncFromNas(false, saved, false);
@@ -1365,25 +1363,66 @@ export function App() {
 
   const allCounts = getFolderCounts('ALL');
 
-
   return (
       <div className="app-shell">
+        {/* 심플하고 현대적인 상단 헤더 */}
         <header className="app-header">
           <div>
             <h1 className="app-title">소이의 단어 암기장</h1>
-            <p className="app-subtitle">전체 {items.length}단어 · FSRS 망각곡선 단어장</p>
+            <div className="header-meta-row">
+            <span className="streak-pill" title="연속 학습 일수">
+              <Flame size={12} />
+              {stats.streak}일째
+            </span>
+              <span className="due-pill" title="오늘 남은 복습 단어">
+              {isCramMode ? `벼락치기 ${dueItems.length}` : `남은 복습 ${dueItems.length}`}
+            </span>
+              <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>
+              · 전체 {items.length}단어
+            </span>
+            </div>
+          </div>
+
+          <div className="header-actions">
+            {nasWebhookUrl && (
+                <button
+                    type="button"
+                    className="header-icon-btn"
+                    onClick={() => handleSyncFromNas(false, undefined, false)}
+                    title="PC · 스마트폰 즉시 동기화"
+                >
+                  <RefreshCw size={17} className={isSyncing ? 'spin' : ''} />
+                </button>
+            )}
+            <button
+                type="button"
+                className="header-icon-btn"
+                onClick={() => setShowGgModal(true)}
+                title="문제집 폴더 선택 및 관리"
+            >
+              <FolderOpen size={17} />
+            </button>
+            <button
+                type="button"
+                className="header-icon-btn"
+                onClick={() => setShowBottomStats(true)}
+                title="학습 옵션 & 환경 설정"
+            >
+              <Settings2 size={17} />
+            </button>
           </div>
         </header>
 
         {toastMsg && <div className="toast-banner">{toastMsg}</div>}
 
-        {/* 폴더 목록 & 순서/이름/통계 관리 모달 */}
+        {/* 1. 문제집 폴더 선택 & 순서/이름 관리 모달 */}
         {showGgModal && (
             <div className="gg-modal-backdrop" onClick={() => setShowGgModal(false)}>
               <div className="gg-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="gg-modal-header">
               <span className="gg-modal-title">
-                ⚙️ 문제집 폴더 위치 · 이름 · 통계 관리
+                <FolderOpen size={18} />
+                문제집 폴더 선택 & 관리
               </span>
                   <button
                       type="button"
@@ -1396,27 +1435,27 @@ export function App() {
 
                 <div className="gg-box">
                   <div className="gg-box-title">
-                    문제집 폴더 목록 (▲/▼ 버튼으로 위치 변경 · ✏️ 버튼으로 이름/상위폴더 수정)
+                    새 폴더 만들기 (▲/▼ 위치 변경 · ✏️ 이름/상위폴더 수정)
                   </div>
-                  <div style={{ display: 'flex', gap: 4 }}>
+                  <div style={{ display: 'flex', gap: 6 }}>
                     <input
                         type="text"
                         className="mini-input"
-                        placeholder="상위 폴더 (예: Vocabulary Engine)"
+                        placeholder="상위 책 (예: Vocabulary Engine)"
                         value={newParentFolder}
                         onChange={(e) => setNewParentFolder(e.target.value)}
                     />
                     <input
                         type="text"
                         className="mini-input"
-                        placeholder="하위 폴더 (예: Unit 10)"
+                        placeholder="하위 유닛 (예: Unit 10)"
                         value={newChildFolder}
                         onChange={(e) => setNewChildFolder(e.target.value)}
                     />
                     <button
                         type="button"
                         className="submit-btn"
-                        style={{ whiteSpace: 'nowrap', padding: '0 10px' }}
+                        style={{ whiteSpace: 'nowrap', padding: '0 12px' }}
                         onClick={handleAddFolderHierarchy}
                     >
                       + 생성
@@ -1428,11 +1467,16 @@ export function App() {
                       <button
                           type="button"
                           className={`folder-item ${studyCategory === 'ALL' ? 'active' : ''}`}
-                          onClick={() => setStudyCategory('ALL')}
+                          onClick={() => {
+                            setStudyCategory('ALL');
+                            setIsCramMode(false);
+                            resetCardInteraction();
+                            setShowGgModal(false);
+                          }}
                       >
                     <span className="folder-item-left">
                       <FolderOpen size={15} />
-                      <span className="folder-name">전체 단어장 (All Problems)</span>
+                      <span className="folder-name">전체 단어장 (All Units)</span>
                     </span>
                         <span className="folder-count">
                       {allCounts.due}/{allCounts.total}
@@ -1452,6 +1496,9 @@ export function App() {
                                   onClick={() => {
                                     setStudyCategory(group.parent);
                                     setTargetCategory(group.parent);
+                                    setIsCramMode(false);
+                                    resetCardInteraction();
+                                    setShowGgModal(false);
                                   }}
                               >
                           <span className="folder-item-left">
@@ -1519,6 +1566,9 @@ export function App() {
                                               onClick={() => {
                                                 setStudyCategory(child.fullPath);
                                                 setTargetCategory(child.fullPath);
+                                                setIsCramMode(false);
+                                                resetCardInteraction();
+                                                setShowGgModal(false);
                                               }}
                                           >
                                   <span className="folder-item-left">
@@ -1580,47 +1630,27 @@ export function App() {
                       );
                     })}
                   </div>
+                </div>
 
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <div className="gg-summary-box">
+                  <div>
+                    현재 폴더: <strong>{studyCategory === 'ALL' ? '전체 단어장' : studyCategory}</strong> (
+                    {selectedPoolItems.length}단어)
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
                     <button
                         type="button"
                         className="secondary-btn"
                         onClick={handleResetFolderStats}
                     >
-                      선택 폴더 복습 일정 초기화
-                    </button>
-                    {nasWebhookUrl && (
-                        <button
-                            type="button"
-                            className="secondary-btn"
-                            onClick={() => handleSyncFromNas(false, nasWebhookUrl, false)}
-                        >
-                          ☁️ 기기 간 즉시 동기화
-                        </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="gg-summary-box">
-                  <div>
-                    <div>
-                      선택된 단어: {selectedPoolItems.length}개 / 전체 {items.length}개
-                    </div>
-                    <div>
-                      누적 학습 횟수: {selectionMetrics.totalTries}회 · 평균 시간:{' '}
-                      {selectionMetrics.avgSec}초
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="button" className="secondary-btn" onClick={handleExportJson}>
-                      백업 저장
+                      일정 초기화
                     </button>
                     <button
                         type="button"
                         className="submit-btn"
                         onClick={() => setShowGgModal(false)}
                     >
-                      확인
+                      닫기
                     </button>
                   </div>
                 </div>
@@ -1628,32 +1658,260 @@ export function App() {
             </div>
         )}
 
+        {/* 2. 새로 통합된 '학습 옵션 & 설정' 모달 (하단 잡다한 버튼들을 모두 이곳으로 수납) */}
+        {showBottomStats && (
+            <div className="gg-modal-backdrop" onClick={() => setShowBottomStats(false)}>
+              <div className="gg-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="gg-modal-header">
+              <span className="gg-modal-title">
+                <Settings2 size={18} />
+                학습 옵션 & 환경 설정
+              </span>
+                  <button
+                      type="button"
+                      className="mini-icon-btn"
+                      onClick={() => setShowBottomStats(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                {/* ① 발음 속도 및 자동 재생 */}
+                <div className="settings-section">
+                  <div className="settings-section-title">
+                    <span>🔊 원어민 발음(TTS) 속도 및 자동 재생</span>
+                    <span>현재 {speechRate}x</span>
+                  </div>
+                  <div className="option-row">
+                    <div className="speed-group">
+                      {SPEECH_RATES.map((r) => (
+                          <button
+                              key={r}
+                              type="button"
+                              className={`speed-chip ${speechRate === r ? 'active' : ''}`}
+                              onClick={() => {
+                                speechRateRef.current = r;
+                                setSpeechRate(r);
+                                if (currentItem) {
+                                  if (isFlipped || spellingResult) {
+                                    speakExampleOrWord(currentItem, r);
+                                  } else {
+                                    speakWord(currentItem.word, r);
+                                  }
+                                }
+                              }}
+                          >
+                            {r}x
+                          </button>
+                      ))}
+                    </div>
+                    <button
+                        type="button"
+                        className={`auto-audio-btn ${autoSpeak ? 'on' : ''}`}
+                        onClick={() => setAutoSpeak((prev) => !prev)}
+                    >
+                      <Volume2 size={14} />
+                      {autoSpeak ? '자동 읽어주기 켜짐' : '수동 재생'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* ② 집중 필터 & 자유 복습(벼락치기) */}
+                <div className="settings-section">
+                  <div className="settings-section-title">
+                    <span>🎯 단어 필터 & 시험 전 자유 복습 (벼락치기)</span>
+                  </div>
+                  <div className="filter-chip-group">
+                    <button
+                        type="button"
+                        className={`filter-chip ${studyFilter === 'all' ? 'active' : ''}`}
+                        onClick={() => {
+                          setStudyFilter('all');
+                          if (isCramMode) setCramQueueIds(selectedPoolItems.map((it) => it.id));
+                          resetCardInteraction();
+                        }}
+                    >
+                      전체 단어 ({selectedPoolItems.length})
+                    </button>
+                    <button
+                        type="button"
+                        className={`filter-chip star ${studyFilter === 'starred' ? 'active' : ''}`}
+                        onClick={() => {
+                          setStudyFilter('starred');
+                          if (isCramMode) {
+                            setCramQueueIds(
+                                selectedPoolItems.filter((it) => it.starred).map((it) => it.id)
+                            );
+                          }
+                          resetCardInteraction();
+                        }}
+                    >
+                      <Star size={13} fill={studyFilter === 'starred' ? 'currentColor' : 'none'} />
+                      별표 단어 ({starredCount})
+                    </button>
+                    <button
+                        type="button"
+                        className={`filter-chip weak ${studyFilter === 'weak' ? 'active' : ''}`}
+                        onClick={() => {
+                          setStudyFilter('weak');
+                          if (isCramMode) {
+                            setCramQueueIds(
+                                selectedPoolItems
+                                    .filter((it) => isWeakItem(it))
+                                    .map((it) => it.id)
+                            );
+                          }
+                          resetCardInteraction();
+                        }}
+                    >
+                      <Flame size={13} />
+                      취약 단어 ({weakCount})
+                    </button>
+                  </div>
+
+                  <button
+                      type="button"
+                      className={`cram-toggle-btn ${isCramMode ? 'active' : ''}`}
+                      onClick={() => {
+                        if (isCramMode) {
+                          exitCramMode();
+                        } else {
+                          startCramMode();
+                          setShowBottomStats(false);
+                        }
+                      }}
+                  >
+                    <Zap size={15} />
+                    {isCramMode
+                        ? '⚡ 자유 복습(벼락치기) 종료하고 일반 모드로 복귀'
+                        : `⚡ FSRS 일정 유지한 채 자유 복습(벼락치기) 시작 (${filteredPoolItems.length}단어)`}
+                  </button>
+                </div>
+
+                {/* ③ 상세 학습 통계 */}
+                <div className="settings-section">
+                  <div className="settings-section-title">
+                <span>
+                  <BarChart2 size={14} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                  상세 학습 통계
+                </span>
+                  </div>
+                  <div style={{ fontSize: '0.82rem', color: '#334155', lineHeight: 1.6 }}>
+                    <div>
+                      • 오늘 완료한 복습: <strong>{stats.todayReviewed}회</strong> (연속{' '}
+                      <strong>{stats.streak}일째</strong> 학습 중)
+                    </div>
+                    <div>
+                      • 선택 폴더 평균 풀이 시간: <strong>{selectionMetrics.avgSec}초</strong> (누적{' '}
+                      {selectionMetrics.totalTries}회)
+                    </div>
+                    {currentItem && (
+                        <div>
+                          • 현재 단어 누적 복습: <strong>{currentCardMetrics.totalTries}회</strong> ·
+                          마지막 풀이: {currentCardMetrics.lastSolved}
+                        </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* ④ NAS 클라우드 동기화 및 기기 설정 */}
+                <div className="settings-section">
+                  <div className="settings-section-title">
+                <span>
+                  <Server size={14} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                  PC · 스마트폰 클라우드 동기화 (NAS n8n)
+                </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                        type="url"
+                        className="mini-input"
+                        style={{ flex: 1 }}
+                        value={nasUrlInput}
+                        onChange={(e) => setNasUrlInput(e.target.value)}
+                        placeholder="https://.../webhook/soi-vocab-inbox"
+                    />
+                    <button type="button" className="submit-btn" onClick={handleSaveNasWebhook}>
+                      저장
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <button
+                        type="button"
+                        className="secondary-btn"
+                        onClick={() => handleSyncFromNas(false, nasUrlInput, true)}
+                    >
+                      🔄 서버 데이터 전체 다시 불러오기
+                    </button>
+                    <button
+                        type="button"
+                        className="secondary-btn"
+                        style={{ color: '#dc2626' }}
+                        onClick={handleClearNasRemote}
+                    >
+                      🗑️ NAS 대기열 비우기
+                    </button>
+                    {deferredPrompt && (
+                        <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={handleInstallPwa}
+                        >
+                          <Smartphone size={13} /> 홈 화면에 앱 설치
+                        </button>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                    type="button"
+                    className="primary-full-btn"
+                    onClick={() => setShowBottomStats(false)}
+                >
+                  확인
+                </button>
+              </div>
+            </div>
+        )}
+
         {activeTab === 'study' && (
             <div className="study-main">
-              {/* 자유 복습(벼락치기) 모드 활성화 배너 */}
-              {isCramMode && (
-                  <div className="cram-banner">
+              {/* 특수 모드(벼락치기 또는 별표/취약 필터)가 켜져 있을 때만 슬림 배너 표시 */}
+              {(isCramMode || studyFilter !== 'all') && (
+                  <div className="active-mode-strip">
               <span>
-                ⚡ <strong>자유 복습(벼락치기) 모드</strong> 진행 중 · FSRS 일정 변경 없이 남은{' '}
-                {dueItems.length}단어를 테스트합니다
+                {isCramMode ? '⚡ 자유 복습(벼락치기) 진행 중 ' : ''}
+                {studyFilter === 'starred'
+                    ? '· ⭐ 별표 단어만 학습 중'
+                    : studyFilter === 'weak'
+                        ? '· 🔥 취약 단어만 학습 중'
+                        : ''}
               </span>
-                    <button type="button" className="secondary-btn" onClick={exitCramMode}>
-                      일반 모드로 종료
+                    <button
+                        type="button"
+                        className="secondary-btn"
+                        style={{ padding: '4px 10px', fontSize: '0.72rem', background: '#ffffff' }}
+                        onClick={() => {
+                          if (isCramMode) exitCramMode();
+                          setStudyFilter('all');
+                        }}
+                    >
+                      해제
                     </button>
                   </div>
               )}
 
-              {/* 1순위: 제목 바로 아래 플래시카드 최상단 배치 */}
+              {/* 메인 플래시카드 영역 */}
               {!currentItem ? (
                   <div className="done-card">
                     <div className="done-icon">
                       <Sparkles size={26} />
                     </div>
-                    <h2 style={{ margin: '0 0 6px', fontSize: '1.15rem' }}>
+                    <h2 style={{ margin: '0 0 6px', fontSize: '1.2rem', fontWeight: 800 }}>
                       [{studyCategory === 'ALL' ? '전체 단어장' : studyCategory}]{' '}
                       {isCramMode ? '자유 복습 완료!' : '오늘 복습 완료!'}
                     </h2>
-                    <p style={{ color: '#64748b', fontSize: '0.86rem', marginBottom: 16 }}>
+                    <p style={{ color: '#64748b', fontSize: '0.88rem', marginBottom: 20 }}>
                       오늘 총 <strong>{stats.todayReviewed}회</strong> 복습을 마쳤습니다.
                     </p>
                     <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -1661,43 +1919,29 @@ export function App() {
                           <button
                               type="button"
                               className="submit-btn"
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '10px 16px' }}
                               onClick={() => startCramMode()}
                           >
                             <Zap size={15} />
-                            ⚡ 자유 복습 (벼락치기 {filteredPoolItems.length}단어)
+                            자유 복습 ({filteredPoolItems.length}단어 더 보기)
                           </button>
                       )}
-                      {isCramMode && (
-                          <button type="button" className="secondary-btn" onClick={exitCramMode}>
-                            일반 모드로 돌아가기
-                          </button>
-                      )}
+                      <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => setShowGgModal(true)}
+                      >
+                        📁 다른 폴더 선택
+                      </button>
                       {studyFilter !== 'all' && (
                           <button
                               type="button"
                               className="secondary-btn"
                               onClick={() => setStudyFilter('all')}
                           >
-                            전체 필터 보기
+                            필터 해제
                           </button>
                       )}
-                      {studyCategory !== 'ALL' && (
-                          <button
-                              type="button"
-                              className="secondary-btn"
-                              onClick={() => setStudyCategory('ALL')}
-                          >
-                            전체 단어장 보기
-                          </button>
-                      )}
-                      <button
-                          type="button"
-                          className="secondary-btn"
-                          onClick={() => setIsFolderSidebarOpen(true)}
-                      >
-                        📂 다른 폴더 선택
-                      </button>
                     </div>
                   </div>
               ) : studyMode === 'flashcard' ? (
@@ -1707,28 +1951,37 @@ export function App() {
                         onClick={() => setIsFlipped((prev) => !prev)}
                     >
                       <div className="card-top-row">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <div className="card-badges-left">
                     <span className="badge-state">
                       {isCramMode ? '⚡ 자유 복습' : getStateLabel(currentItem.card.state)}
                     </span>
-                          <span className="cat-badge">
-                      <FolderOpen size={11} />
+                          <button
+                              type="button"
+                              className="cat-badge"
+                              title="클릭하여 다른 폴더 선택"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowGgModal(true);
+                              }}
+                          >
+                            <FolderOpen size={12} />
                             {normalizeCategory(currentItem.tag)}
-                    </span>
+                          </button>
                           {isWeakItem(currentItem) && (
                               <span
                                   className="badge-state"
                                   style={{ background: '#ffedd5', color: '#c2410c' }}
                               >
-                        🔥 취약 단어
+                        🔥 취약
                       </span>
                           )}
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+
+                        <div className="card-actions-right">
                           <button
                               type="button"
                               className={`star-circle-btn ${currentItem.starred ? 'active' : ''}`}
-                              title="별표(⭐) 단어장 추가/해제 (단축키 S)"
+                              title="별표(⭐) 체크/해제"
                               onClick={(e) => handleToggleStar(currentItem.id, e)}
                           >
                             <Star
@@ -1739,9 +1992,7 @@ export function App() {
                           <button
                               type="button"
                               className="icon-circle-btn"
-                              title={
-                                isFlipped ? '영어 예문 듣기 (단축키 R)' : '단어 발음 듣기 (단축키 R)'
-                              }
+                              title={isFlipped ? '영어 예문 듣기' : '단어 발음 듣기'}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 if (isFlipped) {
@@ -1784,8 +2035,8 @@ export function App() {
                       <div className="flip-hint">
                         <RotateCcw size={13} />
                         {!isFlipped
-                            ? '카드를 터치(또는 Space)하면 뜻과 함께 영어 예문을 읽어줍니다'
-                            : '다시(1)/어려움(2)은 끝부분에 다시 나오고, 보통(3)/쉬움(4)은 통과합니다'}
+                            ? '카드를 터치하면 뜻과 함께 영어 예문을 읽어줍니다'
+                            : '아래에서 기억 난이도를 선택해 주세요'}
                       </div>
                     </div>
 
@@ -1811,20 +2062,24 @@ export function App() {
                   <>
                     <div className="study-card">
                       <div className="card-top-row">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <div className="card-badges-left">
                     <span className="badge-state">
                       {isCramMode ? '⚡ 자유 복습' : getStateLabel(currentItem.card.state)}
                     </span>
-                          <span className="cat-badge">
-                      <FolderOpen size={11} />
+                          <button
+                              type="button"
+                              className="cat-badge"
+                              onClick={() => setShowGgModal(true)}
+                          >
+                            <FolderOpen size={12} />
                             {normalizeCategory(currentItem.tag)}
-                    </span>
+                          </button>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div className="card-actions-right">
                           <button
                               type="button"
                               className={`star-circle-btn ${currentItem.starred ? 'active' : ''}`}
-                              title="별표(⭐) 단어장 추가/해제"
+                              title="별표(⭐) 체크/해제"
                               onClick={(e) => handleToggleStar(currentItem.id, e)}
                           >
                             <Star
@@ -1862,7 +2117,7 @@ export function App() {
                                   onClick={() => speakWord(currentItem.word, speechRate)}
                               >
                                 <Volume2 size={14} />
-                                단어 발음 듣기
+                                발음 힌트
                               </button>
                               <button
                                   type="button"
@@ -1889,7 +2144,7 @@ export function App() {
                                   ref={spellingInputRef}
                                   type="text"
                                   className="spelling-input"
-                                  placeholder="영어 단어 입력 후 엔터 또는 확인..."
+                                  placeholder="영어 단어 입력 후 엔터..."
                                   value={typedAnswer}
                                   onChange={(e) => setTypedAnswer(e.target.value)}
                                   onKeyDown={(e) => {
@@ -1963,8 +2218,8 @@ export function App() {
                   </>
               )}
 
-              {/* 2순위 (카드 아래): 모드 전환 & 5단계 TTS 배속 컨트롤 바 */}
-              <div className="toolbar">
+              {/* 카드 하단: 꼭 필요한 버튼만 남긴 단 1줄의 슬림 컨트롤 바 */}
+              <div className="sleek-control-bar">
                 <div className="mode-switch">
                   <button
                       type="button"
@@ -1974,7 +2229,7 @@ export function App() {
                         resetCardInteraction();
                       }}
                   >
-                    <Layers size={15} />
+                    <Layers size={14} />
                     플래시카드
                   </button>
                   <button
@@ -1985,470 +2240,34 @@ export function App() {
                         resetCardInteraction();
                       }}
                   >
-                    <Keyboard size={15} />
+                    <Keyboard size={14} />
                     스펠링 테스트
                   </button>
                 </div>
 
-                <div className="toolbar-actions">
-                  <div className="speed-group" title="발음 읽어주기 속도">
-                    {SPEECH_RATES.map((r) => (
-                        <button
-                            key={r}
-                            type="button"
-                            className={`speed-chip ${speechRate === r ? 'active' : ''}`}
-                            onClick={() => {
-                              speechRateRef.current = r;
-                              setSpeechRate(r);
-                              if (currentItem) {
-                                if (isFlipped || spellingResult) {
-                                  speakExampleOrWord(currentItem, r);
-                                } else {
-                                  speakWord(currentItem.word, r);
-                                }
-                              }
-                            }}
-                        >
-                          {r}x
-                        </button>
-                    ))}
-                  </div>
+                <div className="sleek-bar-right">
                   <button
                       type="button"
-                      className={`auto-audio-btn ${autoSpeak ? 'on' : ''}`}
-                      onClick={() => setAutoSpeak((prev) => !prev)}
-                  >
-                    <Volume2 size={14} />
-                    {autoSpeak ? '자동' : '수동'}
-                  </button>
-                </div>
-              </div>
-
-              {/* 2.5순위 (안키 스타일 보조 바): 별표/취약 필터 + 실행 취소(Undo) + 자유 복습(벼락치기) */}
-              <div className="anki-filter-bar">
-                <div className="filter-chip-group">
-                  <button
-                      type="button"
-                      className={`filter-chip ${studyFilter === 'all' ? 'active' : ''}`}
-                      onClick={() => {
-                        setStudyFilter('all');
-                        if (isCramMode) setCramQueueIds(selectedPoolItems.map((it) => it.id));
-                        resetCardInteraction();
-                      }}
-                  >
-                    전체 ({selectedPoolItems.length})
-                  </button>
-                  <button
-                      type="button"
-                      className={`filter-chip star ${studyFilter === 'starred' ? 'active' : ''}`}
-                      onClick={() => {
-                        setStudyFilter('starred');
-                        if (isCramMode) {
-                          setCramQueueIds(
-                              selectedPoolItems.filter((it) => it.starred).map((it) => it.id)
-                          );
-                        }
-                        resetCardInteraction();
-                      }}
-                  >
-                    <Star size={13} fill={studyFilter === 'starred' ? 'currentColor' : 'none'} />
-                    별표 단어 ({starredCount})
-                  </button>
-                  <button
-                      type="button"
-                      className={`filter-chip weak ${studyFilter === 'weak' ? 'active' : ''}`}
-                      onClick={() => {
-                        setStudyFilter('weak');
-                        if (isCramMode) {
-                          setCramQueueIds(
-                              selectedPoolItems.filter((it) => isWeakItem(it)).map((it) => it.id)
-                          );
-                        }
-                        resetCardInteraction();
-                      }}
-                  >
-                    <Flame size={13} />
-                    취약 단어 ({weakCount})
-                  </button>
-                </div>
-
-                <div className="filter-chip-group">
-                  <button
-                      type="button"
-                      className="undo-btn"
+                      className="sleek-action-btn"
                       disabled={undoStack.length === 0}
                       onClick={handleUndo}
                       title="방금 넘긴 카드 되돌리기 (단축키 Z)"
                   >
                     <Undo2 size={14} />
-                    되돌리기 {undoStack.length > 0 ? `(${undoStack.length})` : ''}
+                    되돌리기
                   </button>
                   <button
                       type="button"
-                      className={`cram-toggle-btn ${isCramMode ? 'active' : ''}`}
-                      onClick={() => (isCramMode ? exitCramMode() : startCramMode())}
-                      title="FSRS 복습 일정을 유지한 채 현재 폴더 전체 단어를 테스트합니다"
-                  >
-                    <Zap size={13} />
-                    {isCramMode ? '자유 복습 종료' : '자유 복습 (벼락치기)'}
-                  </button>
-                </div>
-              </div>
-
-              {/* 3순위 (카드 아래): 폴더/통계 관리, 폴더 선택, 기기 간 동기화, 연속 학습일, 남은 복습 */}
-              <div
-                  className="header-badges"
-                  style={{
-                    justifyContent: 'space-between',
-                    background: '#ffffff',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: 14,
-                    padding: '10px 12px',
-                  }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <button
-                      type="button"
-                      className="gg-open-btn"
-                      onClick={() => setShowGgModal(true)}
+                      className={`sleek-action-btn ${
+                          isCramMode || studyFilter !== 'all' ? 'highlight' : ''
+                      }`}
+                      onClick={() => setShowBottomStats(true)}
+                      title="배속 · 별표/취약 필터 · 벼락치기 · 통계 설정"
                   >
                     <Settings2 size={14} />
-                    폴더/통계 관리
+                    옵션
                   </button>
-                  <button
-                      type="button"
-                      className="secondary-btn"
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 5,
-                        padding: '6px 10px',
-                        fontSize: '0.76rem',
-                      }}
-                      onClick={() => setIsFolderSidebarOpen((prev) => !prev)}
-                  >
-                    {isFolderSidebarOpen ? (
-                        <PanelLeftClose size={14} />
-                    ) : (
-                        <PanelLeftOpen size={14} />
-                    )}
-                    {isFolderSidebarOpen ? '폴더 닫기' : '폴더 선택'}
-                  </button>
-                  <button
-                      type="button"
-                      className="mini-icon-btn"
-                      onClick={() => setShowNasConfig((prev) => !prev)}
-                      title="NAS 동기화 웹훅 설정"
-                  >
-                    <Server size={15} />
-                  </button>
-                  {nasWebhookUrl && (
-                      <button
-                          type="button"
-                          className="mini-icon-btn"
-                          onClick={() => handleSyncFromNas(false, undefined, false)}
-                          title="PC · 아이폰 · 안드로이드 동기화"
-                      >
-                        <RefreshCw size={15} className={isSyncing ? 'spin' : ''} />
-                      </button>
-                  )}
-                  {deferredPrompt && (
-                      <button
-                          type="button"
-                          className="install-app-btn"
-                          onClick={handleInstallPwa}
-                      >
-                        <Smartphone size={14} />
-                        앱 설치
-                      </button>
-                  )}
                 </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <div className="streak-pill" title="매일 연속 학습한 출석 일수">
-                    <Flame size={14} />
-                    {stats.streak}일째
-                  </div>
-                  <div className="due-pill" title="남은 복습 단어 수">
-                    {isCramMode ? `벼락치기 ${dueItems.length}` : `남은 복습 ${dueItems.length}`}
-                  </div>
-                </div>
-              </div>
-
-              {showNasConfig && (
-                  <div className="api-key-box">
-                    <div>
-                      <strong>NAS n8n 동기화 주소 (PC · 아이폰 · 안드로이드 공용)</strong>
-                    </div>
-                    <div className="api-key-row">
-                      <input
-                          type="url"
-                          className="mini-input"
-                          style={{ flex: 1 }}
-                          value={nasUrlInput}
-                          onChange={(e) => setNasUrlInput(e.target.value)}
-                      />
-                      <button type="button" className="submit-btn" onClick={handleSaveNasWebhook}>
-                        저장
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <button
-                          type="button"
-                          className="secondary-btn"
-                          onClick={() => handleSyncFromNas(false, nasUrlInput, true)}
-                      >
-                        🔄 서버 데이터 전체 다시 불러오기
-                      </button>
-                      <button
-                          type="button"
-                          className="secondary-btn"
-                          style={{ color: '#dc2626' }}
-                          onClick={handleClearNasRemote}
-                      >
-                        🗑️ NAS 대기열 비우기
-                      </button>
-                    </div>
-                  </div>
-              )}
-
-              {/* 폴더 선택 버튼을 눌렀을 때 카드 아래에 펼쳐지는 폴더 트리 */}
-              {isFolderSidebarOpen && (
-                  <aside className="folder-sidebar">
-                    <div className="folder-sidebar-header">
-                <span className="folder-sidebar-title">
-                  <FolderOpen size={15} />
-                  문제집 폴더 목록
-                </span>
-                      <button
-                          type="button"
-                          className="helper-chip"
-                          style={{ padding: '3px 7px', fontSize: '0.7rem' }}
-                          onClick={() => setShowGgModal(true)}
-                      >
-                        + 새 폴더 / 전체 편집
-                      </button>
-                    </div>
-
-                    <div className="folder-list">
-                      <div className="folder-item-wrap">
-                        <button
-                            type="button"
-                            className={`folder-item ${studyCategory === 'ALL' ? 'active' : ''}`}
-                            onClick={() => {
-                              setStudyCategory('ALL');
-                              setIsCramMode(false);
-                              resetCardInteraction();
-                            }}
-                        >
-                    <span className="folder-item-left">
-                      <FolderOpen size={15} />
-                      <span className="folder-name">전체 단어장</span>
-                    </span>
-                          <span className="folder-count">
-                      {allCounts.due}/{allCounts.total}
-                    </span>
-                        </button>
-                      </div>
-
-                      {folderTree.map((group, gIdx) => {
-                        const parentCounts = getFolderCounts(group.parent);
-                        const isParentActive = studyCategory === group.parent;
-                        const isCollapsed = !!collapsedParents[group.parent];
-
-                        return (
-                            <div key={group.parent} className="folder-tree-group">
-                              <div className="folder-item-wrap">
-                                {group.children.length > 0 && (
-                                    <button
-                                        type="button"
-                                        className="folder-expand-btn"
-                                        onClick={() =>
-                                            setCollapsedParents((prev) => ({
-                                              ...prev,
-                                              [group.parent]: !prev[group.parent],
-                                            }))
-                                        }
-                                    >
-                                      {isCollapsed ? (
-                                          <ChevronRight size={13} />
-                                      ) : (
-                                          <ChevronDown size={13} />
-                                      )}
-                                    </button>
-                                )}
-                                <button
-                                    type="button"
-                                    className={`folder-item ${isParentActive ? 'active' : ''}`}
-                                    onClick={() => {
-                                      setStudyCategory(group.parent);
-                                      setTargetCategory(group.parent);
-                                      setIsCramMode(false);
-                                      resetCardInteraction();
-                                    }}
-                                >
-                          <span className="folder-item-left">
-                            {isParentActive ? <FolderOpen size={14} /> : <Folder size={14} />}
-                            <span className="folder-name">{group.parent}</span>
-                          </span>
-                                  <span className="folder-count">
-                            {parentCounts.due}/{parentCounts.total}
-                          </span>
-                                </button>
-                                <button
-                                    type="button"
-                                    className="folder-action-btn"
-                                    title="위로 이동"
-                                    disabled={gIdx === 0}
-                                    onClick={() => handleMoveParentFolder(group.parent, 'up')}
-                                >
-                                  <ArrowUp size={12} />
-                                </button>
-                                <button
-                                    type="button"
-                                    className="folder-action-btn"
-                                    title="아래로 이동"
-                                    disabled={gIdx === folderTree.length - 1}
-                                    onClick={() => handleMoveParentFolder(group.parent, 'down')}
-                                >
-                                  <ArrowDown size={12} />
-                                </button>
-                                <button
-                                    type="button"
-                                    className="folder-action-btn"
-                                    title="하위 유닛 추가"
-                                    onClick={() => handleQuickAddSubfolder(group.parent)}
-                                >
-                                  <Plus size={12} />
-                                </button>
-                                <button
-                                    type="button"
-                                    className="folder-action-btn"
-                                    title="이름 변경"
-                                    onClick={() => handleRenameFolder(group.parent)}
-                                >
-                                  <Pencil size={12} />
-                                </button>
-                                <button
-                                    type="button"
-                                    className="folder-action-btn danger"
-                                    title="폴더 삭제"
-                                    onClick={() => handleDeleteCategory(group.parent)}
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              </div>
-
-                              {!isCollapsed && group.children.length > 0 && (
-                                  <div className="folder-sub-list">
-                                    {group.children.map((child, cIdx) => {
-                                      const childCounts = getFolderCounts(child.fullPath);
-                                      const isChildActive = studyCategory === child.fullPath;
-                                      return (
-                                          <div key={child.fullPath} className="folder-item-wrap">
-                                            <button
-                                                type="button"
-                                                className={`folder-item ${isChildActive ? 'active' : ''}`}
-                                                onClick={() => {
-                                                  setStudyCategory(child.fullPath);
-                                                  setTargetCategory(child.fullPath);
-                                                  setIsCramMode(false);
-                                                  resetCardInteraction();
-                                                }}
-                                            >
-                                  <span className="folder-item-left">
-                                    <Folder size={13} />
-                                    <span className="folder-name">{child.childName}</span>
-                                  </span>
-                                              <span className="folder-count">
-                                    {childCounts.due}/{childCounts.total}
-                                  </span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="folder-action-btn"
-                                                title="위로 이동"
-                                                disabled={cIdx === 0}
-                                                onClick={() =>
-                                                    handleMoveChildFolder(group.parent, child.fullPath, 'up')
-                                                }
-                                            >
-                                              <ArrowUp size={11} />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="folder-action-btn"
-                                                title="아래로 이동"
-                                                disabled={cIdx === group.children.length - 1}
-                                                onClick={() =>
-                                                    handleMoveChildFolder(
-                                                        group.parent,
-                                                        child.fullPath,
-                                                        'down'
-                                                    )
-                                                }
-                                            >
-                                              <ArrowDown size={11} />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="folder-action-btn"
-                                                title="이름 변경"
-                                                onClick={() => handleRenameFolder(child.fullPath)}
-                                            >
-                                              <Pencil size={11} />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="folder-action-btn danger"
-                                                title="삭제"
-                                                onClick={() => handleDeleteCategory(child.fullPath)}
-                                            >
-                                              <Trash2 size={11} />
-                                            </button>
-                                          </div>
-                                      );
-                                    })}
-                                  </div>
-                              )}
-                            </div>
-                        );
-                      })}
-                    </div>
-                  </aside>
-              )}
-
-              {/* PC 키보드 단축키 안내 바 */}
-              <div className="shortcut-hint-bar">
-                ⌨️ PC 단축키: <strong>Space</strong> (카드 뒤집기) · <strong>1~4</strong> (다시/어려움/보통/쉬움) ·{' '}
-                <strong>R</strong> (발음/예문 듣기) · <strong>S</strong> (별표 토글) · <strong>Z</strong> (되돌리기)
-              </div>
-
-              {/* 4순위 (제일 하단): FSRS 학습 통계 */}
-              <div className="bottom-stats-wrap">
-                <button
-                    type="button"
-                    className="stats-toggle-btn"
-                    onClick={() => setShowBottomStats((prev) => !prev)}
-                >
-                  <BarChart2 size={14} />
-                  {showBottomStats ? '학습 통계 숨기기 ▲' : '상세 학습 통계 보기 ▼'}
-                </button>
-
-                {showBottomStats && (
-                    <div className="gg-stats-banner">
-                      <div className="gg-stats-line1">
-                        [오늘 공부량] 총{' '}
-                        <span className="gg-blue">{stats.todayReviewed}문제</span> 복습 완료
-                      </div>
-                      <div className="gg-stats-line3">
-                        이 단어 누적 복습: {currentCardMetrics.totalTries}회 &nbsp;|&nbsp; 평균 시간:{' '}
-                        {currentCardMetrics.avgSec}초 &nbsp;|&nbsp; 상태: ●{' '}
-                        {currentItem ? getStateLabel(currentItem.card.state) : '대기 중'}{' '}
-                        &nbsp;|&nbsp; 마지막 풀이: {currentCardMetrics.lastSolved}
-                      </div>
-                    </div>
-                )}
               </div>
             </div>
         )}
@@ -2458,7 +2277,7 @@ export function App() {
               <div className="category-select-box">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span className="field-label">
-                📁 책 제목 또는 상위/하위 폴더 (책 제목만 적어도 큰 제목 페이지 기준으로 자동 묶입니다)
+                📁 책 제목 또는 상위/하위 폴더 (큰 제목 페이지 기준 자동 묶음)
               </span>
                   <button
                       type="button"
@@ -2489,7 +2308,7 @@ export function App() {
                     className={`sub-tab-btn ${addSubTab === 'camera' ? 'active' : ''}`}
                     onClick={() => setAddSubTab('camera')}
                 >
-                  사진 스캔 (큰제목 자동묶음)
+                  사진 스캔
                 </button>
                 <button
                     type="button"
@@ -2708,14 +2527,13 @@ export function App() {
             </div>
         )}
 
-        {/* 단어 목록 탭: 계층형 폴더 트리 + 별표/취약 필터 + 단어별 별표/수정/삭제 */}
         {activeTab === 'list' && (
             <div className="panel-card">
               <div className="list-folder-tree-box">
                 <div className="folder-sidebar-header">
               <span className="folder-sidebar-title">
                 <FolderOpen size={15} />
-                문제집 폴더 목록 (클릭하여 폴더별 단어 보기 · ▲/▼ 위치 이동 · ✏️ 이름 수정)
+                문제집 폴더 목록 (클릭하여 조회 · ▲/▼ 위치 이동 · ✏️ 이름 수정)
               </span>
                   <button
                       type="button"
@@ -2723,7 +2541,7 @@ export function App() {
                       style={{ padding: '3px 8px', fontSize: '0.72rem' }}
                       onClick={() => setShowGgModal(true)}
                   >
-                    + 새 폴더 추가
+                    + 새 폴더
                   </button>
                 </div>
 
@@ -2912,7 +2730,6 @@ export function App() {
                 />
               </div>
 
-              {/* 단어 목록 내 별표/취약 필터 바 */}
               <div className="filter-chip-group">
                 <button
                     type="button"
@@ -2927,7 +2744,7 @@ export function App() {
                     onClick={() => setStudyFilter('starred')}
                 >
                   <Star size={13} fill={studyFilter === 'starred' ? 'currentColor' : 'none'} />
-                  별표 단어만 ({items.filter((it) => isCategoryMatch(it.tag, listCategory) && it.starred).length})
+                  별표 단어 ({items.filter((it) => isCategoryMatch(it.tag, listCategory) && it.starred).length})
                 </button>
                 <button
                     type="button"
@@ -2935,7 +2752,7 @@ export function App() {
                     onClick={() => setStudyFilter('weak')}
                 >
                   <Flame size={13} />
-                  취약 단어만 ({items.filter((it) => isCategoryMatch(it.tag, listCategory) && isWeakItem(it)).length})
+                  취약 단어 ({items.filter((it) => isCategoryMatch(it.tag, listCategory) && isWeakItem(it)).length})
                 </button>
               </div>
 
