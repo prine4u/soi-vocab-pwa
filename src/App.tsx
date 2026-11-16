@@ -1434,7 +1434,7 @@ export function App() {
               <div className="gg-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="gg-modal-header">
               <span className="gg-modal-title">
-                <Sparkles size={18} color="#4f46e5" />
+                <Sparkles size={18} color="#eab308" />
                 FSRS 망각곡선 암기법이란 무엇인가요?
               </span>
                   <button
