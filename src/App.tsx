@@ -2335,7 +2335,7 @@ export function App() {
                     스펠링 테스트
                   </button>
                 </div>
-
+                
                 <div className="sleek-bar-right">
                   <button
                       type="button"
@@ -2346,17 +2346,6 @@ export function App() {
                   >
                     <Undo2 size={14} />
                     되돌리기
-                  </button>
-                  <button
-                      type="button"
-                      className={`sleek-action-btn ${
-                          isCramMode || studyFilter !== 'all' ? 'highlight' : ''
-                      }`}
-                      onClick={() => setShowBottomStats(true)}
-                      title="배속 · 별표/취약 필터 · 벼락치기 · 통계 설정"
-                  >
-                    <Settings2 size={14} />
-                    옵션
                   </button>
                 </div>
               </div>
