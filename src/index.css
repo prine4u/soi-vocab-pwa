@@ -412,6 +412,75 @@ body {
     border: 1px solid var(--easy-border);
 }
 
+/* Flashcard Front/Back Direction Toggle (영→한 / 한→영 / 한·영 랜덤) */
+.dir-badge {
+    font-size: 0.72rem;
+    font-weight: 800;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: #0f172a;
+    color: #ffed00;
+}
+
+.reverse-prompt-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #713f12;
+    margin-bottom: 6px;
+}
+
+.meaning-display.reverse-front {
+    font-size: 1.22rem;
+    text-align: center;
+    margin-top: 4px;
+    padding: 18px 20px;
+}
+
+.direction-switch-bar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 4px;
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.03);
+}
+
+.direction-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 8px 6px;
+    border-radius: 11px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    transition: all 0.15s ease;
+}
+
+.direction-btn:hover {
+    color: var(--text);
+    background: var(--surface-sub);
+}
+
+.direction-btn.active {
+    background: var(--primary);
+    color: var(--primary-ink);
+    font-weight: 800;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.1);
+}
+
+.direction-btn.random.active {
+    background: #0f172a;
+    color: #ffed00;
+    font-weight: 800;
+}
+
 /* Single Sleek Control Bar Below Card */
 .sleek-control-bar {
     display: flex;

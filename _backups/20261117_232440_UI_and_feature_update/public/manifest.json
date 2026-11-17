@@ -1,0 +1,19 @@
+{
+  "name": "소이의 단어 암기장 - AI 영단어장",
+  "short_name": "소이 단어장",
+  "description": "FSRS 망각곡선 기반 AI 영어 단어 암기장",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#faf9f5",
+  "theme_color": "#FFED00",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

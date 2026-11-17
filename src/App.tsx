@@ -45,6 +45,8 @@ import {
   Star,
   Undo2,
   Zap,
+  ArrowLeftRight,
+  Shuffle,
 } from 'lucide-react';
 import type {
   VocabItem,
@@ -107,8 +109,11 @@ interface UndoSnapshot {
   wordLabel: string;
 }
 
+type FlashcardDirection = 'en-ko' | 'ko-en' | 'random';
+
 const SPEECH_RATES = [0.5, 0.7, 0.8, 0.9, 1.0];
 const SPEECH_RATE_STORAGE_KEY = 'soi_vocab_speech_rate_v1';
+const FLASHCARD_DIR_STORAGE_KEY = 'soi_vocab_flashcard_dir_v1';
 
 function formatInterval(due: Date, now: Date): string {
   const diffMs = Math.max(0, due.getTime() - now.getTime());
@@ -185,6 +190,13 @@ export function App() {
   const [stats, setStats] = useState<StudyStats>(() => loadStudyStats());
   const [activeTab, setActiveTab] = useState<AppTab>('study');
   const [studyMode, setStudyMode] = useState<StudyMode>('flashcard');
+  const [flashcardDirection, setFlashcardDirection] = useState<FlashcardDirection>(() => {
+    const saved = localStorage.getItem(FLASHCARD_DIR_STORAGE_KEY);
+    return saved === 'ko-en' || saved === 'random' ? saved : 'en-ko';
+  });
+  const [randomSide, setRandomSide] = useState<'en-ko' | 'ko-en'>(() =>
+    Math.random() < 0.5 ? 'en-ko' : 'ko-en'
+  );
   const [studyFilter, setStudyFilter] = useState<StudyFilter>('all');
   const [autoSpeak, setAutoSpeak] = useState<boolean>(true);
   const [speechRate, setSpeechRate] = useState<number>(() => {
@@ -200,7 +212,6 @@ export function App() {
   const [cramQueueIds, setCramQueueIds] = useState<string[]>([]);
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
 
-  
   const [showBottomStats, setShowBottomStats] = useState<boolean>(false);
   const [showFsrsModal, setShowFsrsModal] = useState<boolean>(false);  
   
@@ -274,6 +285,10 @@ export function App() {
     speechRateRef.current = speechRate;
     localStorage.setItem(SPEECH_RATE_STORAGE_KEY, String(speechRate));
   }, [speechRate]);
+
+  useEffect(() => {
+    localStorage.setItem(FLASHCARD_DIR_STORAGE_KEY, flashcardDirection);
+  }, [flashcardDirection]);
 
   useEffect(() => {
     if ('speechSynthesis' in window) {
@@ -431,6 +446,9 @@ export function App() {
   }, [filteredPoolItems, isCramMode, cramQueueIds]);
 
   const currentItem = dueItems[0] ?? null;
+  const effectiveDirection: 'en-ko' | 'ko-en' =
+    flashcardDirection === 'random' ? randomSide : flashcardDirection;
+  const isKoToEn = effectiveDirection === 'ko-en';
 
   useEffect(() => {
     cardStartTimeRef.current = Date.now();
@@ -490,13 +508,21 @@ export function App() {
     if (activeTab !== 'study' || studyMode !== 'flashcard' || !autoSpeak || !currentItem) {
       return;
     }
-    if (!isFlipped) {
-      speakWord(currentItem.word, speechRate);
+    if (isKoToEn) {
+      // 한→영 모드: 앞면(한국어 뜻)에서는 발음을 숨기고, 카드를 뒤집어 영어 정답이 공개될 때 발음 재생
+      if (isFlipped) {
+        speakWord(currentItem.word, speechRate);
+      }
     } else {
-      speakExampleOrWord(currentItem, speechRate);
+      // 영→한 모드: 앞면에서는 영단어 발음, 뒷면에서는 예문 발음 재생
+      if (!isFlipped) {
+        speakWord(currentItem.word, speechRate);
+      } else {
+        speakExampleOrWord(currentItem, speechRate);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, studyMode, autoSpeak, currentItem?.id, isFlipped]);
+  }, [activeTab, studyMode, autoSpeak, currentItem?.id, isFlipped, effectiveDirection]);
 
   useEffect(() => {
     if (activeTab === 'study' && studyMode === 'spelling' && currentItem && !spellingResult) {
@@ -509,6 +535,7 @@ export function App() {
     setTypedAnswer('');
     setSpellingResult(null);
     setShowHint(false);
+    setRandomSide(Math.random() < 0.5 ? 'en-ko' : 'ko-en');
     cardStartTimeRef.current = Date.now();
   };
 
@@ -923,7 +950,9 @@ export function App() {
       // R: 발음/예문 다시 듣기
       if (e.key === 'r' || e.key === 'R') {
         e.preventDefault();
-        if (isFlipped || spellingResult) {
+        if (studyMode === 'flashcard' && isKoToEn) {
+          speakWord(currentItem.word, speechRate);
+        } else if (isFlipped || spellingResult) {
           speakExampleOrWord(currentItem, speechRate);
         } else {
           speakWord(currentItem.word, speechRate);
@@ -1503,9 +1532,6 @@ export function App() {
             </div>
         )}
 
-        {toastMsg && <div className="toast-banner">{toastMsg}</div>}
-        
-        
         {/* 1. 문제집 폴더 선택 & 순서/이름 관리 모달 */}
         {showGgModal && (
             <div className="gg-modal-backdrop" onClick={() => setShowGgModal(false)}>
@@ -1749,7 +1775,7 @@ export function App() {
             </div>
         )}
 
-        {/* 2. 새로 통합된 '학습 옵션 & 설정' 모달 (하단 잡다한 버튼들을 모두 이곳으로 수납) */}
+        {/* 2. 새로 통합된 '학습 옵션 & 설정' 모달 */}
         {showBottomStats && (
             <div className="gg-modal-backdrop" onClick={() => setShowBottomStats(false)}>
               <div className="gg-modal" onClick={(e) => e.stopPropagation()}>
@@ -2046,6 +2072,13 @@ export function App() {
                     <span className="badge-state">
                       {isCramMode ? '⚡ 자유 복습' : getStateLabel(currentItem.card.state)}
                     </span>
+                          {flashcardDirection !== 'en-ko' && (
+                              <span className="dir-badge">
+                                {flashcardDirection === 'random'
+                                    ? `🔀 랜덤 (${isKoToEn ? '한→영' : '영→한'})`
+                                    : '한 → 영'}
+                              </span>
+                          )}
                           <button
                               type="button"
                               className="cat-badge"
@@ -2083,10 +2116,20 @@ export function App() {
                           <button
                               type="button"
                               className="icon-circle-btn"
-                              title={isFlipped ? '영어 예문 듣기' : '단어 발음 듣기'}
+                              title={
+                                isKoToEn
+                                    ? !isFlipped
+                                        ? '발음 힌트 듣기'
+                                        : '정답 단어 발음 듣기'
+                                    : isFlipped
+                                        ? '영어 예문 듣기'
+                                        : '단어 발음 듣기'
+                              }
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (isFlipped) {
+                                if (isKoToEn) {
+                                  speakWord(currentItem.word, speechRate);
+                                } else if (isFlipped) {
                                   speakExampleOrWord(currentItem, speechRate);
                                 } else {
                                   speakWord(currentItem.word, speechRate);
@@ -2099,18 +2142,88 @@ export function App() {
                       </div>
 
                       <div className="card-center">
-                        <h2 className="word-display">{currentItem.word}</h2>
-                        {currentItem.phonetic && (
-                            <div className="phonetic-display">{currentItem.phonetic}</div>
-                        )}
-
-                        {isFlipped && (
+                        {!isKoToEn ? (
                             <>
+                              <h2 className="word-display">{currentItem.word}</h2>
+                              {currentItem.phonetic && (
+                                  <div className="phonetic-display">{currentItem.phonetic}</div>
+                              )}
+
+                              {isFlipped && (
+                                  <>
+                                    <div className="meaning-display">{currentItem.meaning}</div>
+                                    {currentItem.example && (
+                                        <div
+                                            className="example-box"
+                                            title="터치하면 영어 예문을 다시 읽어줍니다"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              speakExampleOrWord(currentItem, speechRate);
+                                            }}
+                                        >
+                                          {currentItem.example}
+                                        </div>
+                                    )}
+                                  </>
+                              )}
+                            </>
+                        ) : !isFlipped ? (
+                            <>
+                              <div className="reverse-prompt-label">
+                                한국어 뜻을 보고 영어 단어를 떠올려 보세요
+                              </div>
+                              <div className="meaning-display reverse-front">
+                                {getSpellingPromptMeaning(currentItem.meaning, currentItem.word)}
+                              </div>
+                              <div
+                                  className="spelling-helpers"
+                                  onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                    type="button"
+                                    className="helper-chip"
+                                    onClick={() => speakWord(currentItem.word, speechRate)}
+                                >
+                                  <Volume2 size={14} />
+                                  발음 힌트
+                                </button>
+                                <button
+                                    type="button"
+                                    className="helper-chip"
+                                    onClick={() => setShowHint((prev) => !prev)}
+                                >
+                                  <HelpCircle size={14} />
+                                  첫 글자 힌트
+                                </button>
+                              </div>
+                              {showHint && (
+                                  <div className="hint-text">
+                                    {currentItem.word[0]}{' '}
+                                    {'_ '.repeat(Math.max(0, currentItem.word.length - 1))} (
+                                    {currentItem.word.length}글자)
+                                  </div>
+                              )}
+                            </>
+                        ) : (
+                            <>
+                              <h2
+                                  className="word-display"
+                                  title="터치하면 단어 발음을 다시 읽어줍니다"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    speakWord(currentItem.word, speechRate);
+                                  }}
+                              >
+                                {currentItem.word}
+                              </h2>
+                              {currentItem.phonetic && (
+                                  <div className="phonetic-display">{currentItem.phonetic}</div>
+                              )}
                               <div className="meaning-display">{currentItem.meaning}</div>
                               {currentItem.example && (
                                   <div
                                       className="example-box"
-                                      title="터치하면 영어 예문을 다시 읽어줍니다"
+                                      title="터치하면 영어 예문을 읽어줍니다"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         speakExampleOrWord(currentItem, speechRate);
@@ -2126,7 +2239,9 @@ export function App() {
                       <div className="flip-hint">
                         <RotateCcw size={13} />
                         {!isFlipped
-                            ? '카드를 터치하면 뜻과 함께 영어 예문을 읽어줍니다'
+                            ? isKoToEn
+                                ? '카드를 터치하면 정답 영어 단어와 발음을 확인합니다'
+                                : '카드를 터치하면 뜻과 함께 영어 예문을 읽어줍니다'
                             : '아래에서 기억 난이도를 선택해 주세요'}
                       </div>
                     </div>
@@ -2307,6 +2422,44 @@ export function App() {
                         </div>
                     )}
                   </>
+              )}
+
+              {/* 플래시카드 앞뒷면 방향 선택 바 (영→한 / 한→영 / 한·영 랜덤) */}
+              {studyMode === 'flashcard' && (
+                  <div className="direction-switch-bar" role="group" aria-label="플래시카드 앞뒷면 방향">
+                    <button
+                        type="button"
+                        className={`direction-btn ${flashcardDirection === 'en-ko' ? 'active' : ''}`}
+                        onClick={() => {
+                          setFlashcardDirection('en-ko');
+                          resetCardInteraction();
+                        }}
+                    >
+                      영 → 한
+                    </button>
+                    <button
+                        type="button"
+                        className={`direction-btn ${flashcardDirection === 'ko-en' ? 'active' : ''}`}
+                        onClick={() => {
+                          setFlashcardDirection('ko-en');
+                          resetCardInteraction();
+                        }}
+                    >
+                      <ArrowLeftRight size={13} />
+                      한 → 영
+                    </button>
+                    <button
+                        type="button"
+                        className={`direction-btn random ${flashcardDirection === 'random' ? 'active' : ''}`}
+                        onClick={() => {
+                          setFlashcardDirection('random');
+                          resetCardInteraction();
+                        }}
+                    >
+                      <Shuffle size={13} />
+                      한/영 랜덤
+                    </button>
+                  </div>
               )}
 
               {/* 카드 하단: 꼭 필요한 버튼만 남긴 단 1줄의 슬림 컨트롤 바 */}
