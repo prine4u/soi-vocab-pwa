@@ -21,6 +21,7 @@ import {
   downloadSampleExcelFile,
   type ExcelParsedItem,
 } from '../utils/excelImport';
+import { ExcelGuideModal } from './ExcelGuideModal';
 import { createNewVocabItem, normalizeCategory, formatFolderSegment } from '../utils/storage';
 
 interface ExcelImportModalProps {
@@ -57,7 +58,8 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
   const [useExcelUnit, setUseExcelUnit] = useState<boolean>(true);
   const [duplicateAction, setDuplicateAction] = useState<'skip' | 'overwrite' | 'allow'>('skip');
-  const [showGuide, setShowGuide] = useState<boolean>(true);
+  const [showGuide, setShowGuide] = useState<boolean>(false);
+  const [showGuideModal, setShowGuideModal] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -301,13 +303,73 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             <FileSpreadsheet size={19} color="#16a34a" />
             엑셀 파일로 단어 일괄 등록
           </span>
-          <button type="button" className="mini-icon-btn" onClick={handleClose}>
-            <X size={16} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              type="button"
+              className="helper-chip guide-btn"
+              onClick={() => setShowGuideModal(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                background: '#fef08a',
+                color: '#854d0e',
+                border: '1px solid #facc15',
+                fontWeight: 700,
+                fontSize: '0.74rem',
+                padding: '4px 9px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+              }}
+              title="엑셀 작성법 및 3단계 폴더 분류 설명서 열기"
+            >
+              <HelpCircle size={14} />
+              엑셀 설명서
+            </button>
+            <button type="button" className="mini-icon-btn" onClick={handleClose}>
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         <div className="excel-modal-body">
-          {/* 1. 작성 가이드 및 샘플 양식 다운로드 아코디언 */}
+          {/* 심플 설명서 안내 바 */}
+          <div className="excel-guide-bar">
+            <div className="excel-guide-bar-left">
+              <Sparkles size={14} color="#eab308" />
+              <span>3단계 폴더(시리즈 &gt; 권 &gt; 강) 자동 분류 & 작성법</span>
+            </div>
+            <div className="excel-guide-bar-actions">
+              <button
+                type="button"
+                className="helper-chip"
+                style={{
+                  fontSize: '0.72rem',
+                  padding: '3px 8px',
+                  background: '#fef08a',
+                  color: '#854d0e',
+                  border: '1px solid #facc15',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+                onClick={() => setShowGuideModal(true)}
+              >
+                📖 설명서 보기
+              </button>
+              <button
+                type="button"
+                className="sample-download-btn"
+                onClick={downloadSampleExcelFile}
+                style={{ fontSize: '0.72rem', padding: '3px 8px' }}
+                title="소이 단어장 표준 엑셀 양식 다운로드"
+              >
+                <Download size={12} />
+                양식 다운로드
+              </button>
+            </div>
+          </div>
+
+          {/* 1. 작성 가이드 및 샘플 양식 아코디언 */}
           <div className="excel-guide-card">
             <div
               className="excel-guide-header"
@@ -316,23 +378,11 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
               tabIndex={0}
             >
               <div className="excel-guide-title">
-                <HelpCircle size={15} color="#eab308" />
-                <span>엑셀 작성법 & 상위/하위 폴더 구분 안내</span>
+                <HelpCircle size={14} color="#eab308" />
+                <span>엑셀 미리보기 및 상세 규칙 펼치기</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button
-                  type="button"
-                  className="sample-download-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    downloadSampleExcelFile();
-                  }}
-                  title="소이 단어장 표준 엑셀 양식 다운로드"
-                >
-                  <Download size={13} />
-                  샘플 엑셀 다운로드
-                </button>
-                {showGuide ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                {showGuide ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
               </div>
             </div>
 
@@ -727,6 +777,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* 엑셀 3단계 폴더 설명서 팝업창 */}
+      <ExcelGuideModal
+        isOpen={showGuideModal}
+        onClose={() => setShowGuideModal(false)}
+      />
     </div>
   );
 };

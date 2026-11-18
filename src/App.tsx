@@ -91,6 +91,7 @@ import {
   pushStateToNas,
 } from './utils/cloudSync';
 import { ExcelImportModal } from './components/ExcelImportModal';
+import { FolderGuideModal } from './components/FolderGuideModal';
 import { downloadSampleExcelFile } from './utils/excelImport';
 
 interface CategoryTreeNode {
@@ -273,6 +274,7 @@ export function App() {
   const [listCategory, setListCategory] = useState<string>('ALL');
   const [targetCategory, setTargetCategory] = useState<string>('Vocabulary Engine');
   const [showGgModal, setShowGgModal] = useState<boolean>(false);
+  const [showFolderGuideModal, setShowFolderGuideModal] = useState<boolean>(false);
   const [newParentFolder, setNewParentFolder] = useState<string>('');
   const [newChildFolder, setNewChildFolder] = useState<string>('');
 
@@ -1685,16 +1687,55 @@ export function App() {
                 <FolderOpen size={18} />
                 문제집 폴더 선택 & 관리
               </span>
-                  <button
-                      type="button"
-                      className="mini-icon-btn"
-                      onClick={() => setShowGgModal(false)}
-                  >
-                    <X size={16} />
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <button
+                        type="button"
+                        className="helper-chip guide-btn"
+                        onClick={() => setShowFolderGuideModal(true)}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          background: '#fef08a',
+                          color: '#854d0e',
+                          border: '1px solid #facc15',
+                          fontWeight: 700,
+                          fontSize: '0.74rem',
+                          padding: '4px 9px',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                        }}
+                        title="3단계 폴더 관리법 및 사용 설명서 열기"
+                    >
+                      <HelpCircle size={14} />
+                      폴더 설명서
+                    </button>
+                    <button
+                        type="button"
+                        className="mini-icon-btn"
+                        onClick={() => setShowGgModal(false)}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="gg-box">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', background: '#fefce8', border: '1px solid #fef08a', borderRadius: '10px', marginBottom: '10px' }}>
+                    <span style={{ fontSize: '0.74rem', color: '#854d0e', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      <Sparkles size={13} color="#eab308" />
+                      3단계 폴더(시리즈 &gt; 권 &gt; 강)와 접기 방법이 궁금하신가요?
+                    </span>
+                    <button
+                      type="button"
+                      className="helper-chip"
+                      style={{ fontSize: '0.7rem', padding: '2px 8px', background: '#fef08a', color: '#854d0e', borderColor: '#facc15', fontWeight: 700, cursor: 'pointer' }}
+                      onClick={() => setShowFolderGuideModal(true)}
+                    >
+                      📖 설명서 보기
+                    </button>
+                  </div>
+
                   <div className="gg-box-title">
                     새 폴더 만들기 (▲/▼ 위치 변경 · ✏️ 이름/상위폴더 수정)
                   </div>
@@ -1795,6 +1836,12 @@ export function App() {
               </div>
             </div>
         )}
+
+        {/* 문제집 폴더 관리 설명서 팝업창 */}
+        <FolderGuideModal
+          isOpen={showFolderGuideModal}
+          onClose={() => setShowFolderGuideModal(false)}
+        />
 
         {/* 2. 새로 통합된 '학습 옵션 & 설정' 모달 */}
         {showBottomStats && (
