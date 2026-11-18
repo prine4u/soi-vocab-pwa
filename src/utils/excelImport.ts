@@ -17,11 +17,6 @@ export interface ExcelImportOptions {
   duplicateHandling: 'skip' | 'overwrite' | 'allow';
 }
 
-// 컬럼 헤더 매핑 유틸
-function normalizeHeader(key: string): string {
-  return key.trim().toLowerCase().replace(/[\s_\-]/g, '');
-}
-
 export function parseExcelBuffer(buffer: ArrayBuffer): ExcelParsedItem[] {
   const workbook = XLSX.read(buffer, { type: 'array' });
   const sheetName = workbook.SheetNames[0];
@@ -43,27 +38,110 @@ export function parseExcelBuffer(buffer: ArrayBuffer): ExcelParsedItem[] {
   let posKey = '';
 
   for (const k of keys) {
-    const norm = normalizeHeader(k);
-    if (['단어', '영단어', '영어', 'word', 'english', 'voca', 'vocab'].includes(norm)) {
-      if (!wordKey) wordKey = k;
-    } else if (['뜻', '의미', '한글뜻', '해석', 'meaning', 'korean', 'definition'].includes(norm)) {
-      if (!meaningKey) meaningKey = k;
-    } else if (['발음', '발음기호', 'phonetic', 'pronunciation'].includes(norm)) {
-      if (!phoneticKey) phoneticKey = k;
-    } else if (['예문', '문장', '예문해석', 'example', 'sentence'].includes(norm)) {
-      if (!exampleKey) exampleKey = k;
-    } else if (['폴더', '유닛', '단원', 'unit', 'folder', 'chapter', 'category'].includes(norm)) {
-      if (!unitKey) unitKey = k;
-    } else if (['품사', 'pos', 'partofspeech'].includes(norm)) {
-      if (!posKey) posKey = k;
+    const raw = k.trim().toLowerCase();
+    const clean = raw.replace(/[\s_\-()[\]/]/g, '');
+
+    // 1. 단어 / 영어 열 감지
+    if (!wordKey) {
+      if (
+        clean.includes('word') ||
+        clean.includes('단어') ||
+        clean.includes('영단어') ||
+        clean.includes('영어') ||
+        clean.includes('vocab') ||
+        clean.includes('voca') ||
+        clean.includes('english')
+      ) {
+        wordKey = k;
+        continue;
+      }
+    }
+
+    // 2. 품사 (POS) 열 감지
+    if (!posKey) {
+      if (
+        clean.includes('pos') ||
+        clean.includes('품사') ||
+        clean.includes('partofspeech')
+      ) {
+        posKey = k;
+        continue;
+      }
+    }
+
+    // 3. 뜻 / 의미 열 감지
+    if (!meaningKey) {
+      if (
+        clean.includes('meaning') ||
+        clean.includes('뜻') ||
+        clean.includes('의미') ||
+        clean.includes('한글뜻') ||
+        clean.includes('해석') ||
+        clean.includes('korean') ||
+        clean.includes('definition')
+      ) {
+        meaningKey = k;
+        continue;
+      }
+    }
+
+    // 4. 발음기호 열 감지
+    if (!phoneticKey) {
+      if (
+        clean.includes('phonetic') ||
+        clean.includes('발음') ||
+        clean.includes('발음기호') ||
+        clean.includes('pronunciation') ||
+        clean.includes('sound')
+      ) {
+        phoneticKey = k;
+        continue;
+      }
+    }
+
+    // 5. 예문 / 문장 열 감지
+    if (!exampleKey) {
+      if (
+        clean.includes('example') ||
+        clean.includes('예문') ||
+        clean.includes('문장') ||
+        clean.includes('sentence')
+      ) {
+        exampleKey = k;
+        continue;
+      }
+    }
+
+    // 6. 유닛 / 폴더 / 단원 열 감지
+    if (!unitKey) {
+      if (
+        clean.includes('unit') ||
+        clean.includes('유닛') ||
+        clean.includes('폴더') ||
+        clean.includes('folder') ||
+        clean.includes('단원') ||
+        clean.includes('강') ||
+        clean.includes('chapter') ||
+        clean.includes('lesson') ||
+        clean.includes('레슨')
+      ) {
+        unitKey = k;
+        continue;
+      }
     }
   }
 
-  // 만약 헤더 키를 못 찾았을 경우 순서 기반(A=단어, B=뜻, ...) 추론
-  if (!wordKey && keys.length > 0) wordKey = keys[0];
-  if (!meaningKey && keys.length > 1) meaningKey = keys[1];
-  if (!phoneticKey && keys.length > 2 && keys[2].toLowerCase().includes('phone')) phoneticKey = keys[2];
-  if (!exampleKey && keys.length > 3) exampleKey = keys[3];
+  // 만약 헤더 키를 못 찾았을 경우 스마트 추론:
+  // pos, phonetic, example, unit 등으로 이미 지정된 키를 제외하고 남은 키에서 word, meaning 할당
+  const reservedKeys = new Set([posKey, phoneticKey, exampleKey, unitKey].filter(Boolean));
+  const availableKeys = keys.filter((k) => !reservedKeys.has(k));
+
+  if (!wordKey && availableKeys.length > 0) {
+    wordKey = availableKeys[0];
+  }
+  if (!meaningKey && availableKeys.length > 1) {
+    meaningKey = availableKeys[1];
+  }
 
   const results: ExcelParsedItem[] = [];
 
@@ -136,7 +214,7 @@ export function downloadSampleExcelFile() {
       '뜻 (Meaning)': '호기심 많은',
       '발음기호 (Phonetic)': '[kjúəriəs]',
       '예문 (Example)': 'Children are naturally curious about the world.',
-      '유닛/폴더 (Unit)': '레슨01',
+      '유닛/폴더 (Unit)': '레슨 01',
     },
     {
       '단어 (Word)': 'magazine',
@@ -165,7 +243,6 @@ export function downloadSampleExcelFile() {
   ];
 
   const worksheet = XLSX.utils.json_to_sheet(sampleData);
-  // 컬럼 너비 조정
   worksheet['!cols'] = [
     { wch: 15 }, // 단어
     { wch: 15 }, // 품사
