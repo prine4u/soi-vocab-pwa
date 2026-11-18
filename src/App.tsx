@@ -45,8 +45,8 @@ import {
   Star,
   Undo2,
   Zap,
-  ArrowLeftRight,
   Shuffle,
+  FileSpreadsheet,
 } from 'lucide-react';
 import type {
   VocabItem,
@@ -90,6 +90,8 @@ import {
   clearNasRemoteDb,
   pushStateToNas,
 } from './utils/cloudSync';
+import { ExcelImportModal } from './components/ExcelImportModal';
+import { downloadSampleExcelFile } from './utils/excelImport';
 
 interface FolderTreeNode {
   parent: string;
@@ -235,12 +237,12 @@ export function App() {
   const cardStartTimeRef = useRef<number>(Date.now());
   const spellingInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [addSubTab, setAddSubTab] = useState<'camera' | 'single' | 'bulk'>('camera');
+  const [addSubTab, setAddSubTab] = useState<'camera' | 'single' | 'excel'>('camera');
+  const [showExcelModal, setShowExcelModal] = useState<boolean>(false);
   const [newWord, setNewWord] = useState<string>('');
   const [newPhonetic, setNewPhonetic] = useState<string>('');
   const [newMeaning, setNewMeaning] = useState<string>('');
   const [newExample, setNewExample] = useState<string>('');
-  const [bulkText, setBulkText] = useState<string>('');
   const [toastMsg, setToastMsg] = useState<string>('');
 
   const [geminiApiKey, setGeminiApiKey] = useState<string>(() => loadGeminiApiKey());
@@ -537,6 +539,14 @@ export function App() {
     setShowHint(false);
     setRandomSide(Math.random() < 0.5 ? 'en-ko' : 'ko-en');
     cardStartTimeRef.current = Date.now();
+  };
+
+  const handleToggleFlashcardDirection = () => {
+    setFlashcardDirection((prev) => {
+      const next: FlashcardDirection = prev === 'en-ko' ? 'ko-en' : prev === 'ko-en' ? 'random' : 'en-ko';
+      return next;
+    });
+    resetCardInteraction();
   };
 
   // 안키 보조 기능 1: 자유 복습(벼락치기) 시작 및 종료
@@ -1224,46 +1234,6 @@ export function App() {
     showToast(`[${normFolder}]에 "${created.word}" 단어가 추가되었습니다.`);
   };
 
-  const handleAddBulk = () => {
-    const lines = bulkText
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean);
-    if (lines.length === 0) return;
-
-    const normFolder = normalizeCategory(targetCategory);
-    const added: VocabItem[] = [];
-    const nowTs = Date.now();
-
-    lines.forEach((line, idx) => {
-      const [mainPart, examplePart] = line.split('|').map((p) => p.trim());
-      const match = mainPart.match(/^(.+?)(?:\t|\s+-\s+|\s*[:=]\s*|\s*,\s*)(.+)$/);
-      if (match) {
-        added.push(
-            createNewVocabItem(
-                match[1].trim(),
-                match[2].trim(),
-                examplePart,
-                new Date(nowTs + idx),
-                normFolder
-            )
-        );
-      }
-    });
-
-    if (added.length === 0) {
-      showToast('인식된 단어가 없습니다. "단어 - 뜻" 형식을 확인해 주세요.');
-      return;
-    }
-    const nextCats = Array.from(new Set([...allCategories, normFolder]));
-    const nextItems = [...added, ...items];
-    setCustomCategories(nextCats);
-    setItems(nextItems);
-    setBulkText('');
-    scheduleCloudPush(nextItems, nextCats, stats);
-    showToast(`[${normFolder}]에 ${added.length}개 단어가 등록되었습니다.`);
-  };
-
   const handleDeleteItem = (item: VocabItem) => {
     if (!window.confirm(`"${item.word}" 단어를 정말 삭제하시겠습니까?`)) return;
     const nextItems = items.filter((it) => it.id !== item.id);
@@ -1426,6 +1396,21 @@ export function App() {
           </div>
 
           <div className="header-actions">
+            <button
+                type="button"
+                className={`header-direction-btn ${flashcardDirection}`}
+                onClick={handleToggleFlashcardDirection}
+                title="단어 암기 방향 전환 (클릭 시 영→한 / 한→영 / 한·영 랜덤 순환)"
+            >
+              {flashcardDirection === 'en-ko' && <span>영 → 한</span>}
+              {flashcardDirection === 'ko-en' && <span>한 → 영</span>}
+              {flashcardDirection === 'random' && (
+                <>
+                  <Shuffle size={13} />
+                  <span>랜덤</span>
+                </>
+              )}
+            </button>
             {nasWebhookUrl && (
                 <button
                     type="button"
@@ -1991,6 +1976,25 @@ export function App() {
             </div>
         )}
 
+        {/* 3. 엑셀 파일로 단어 일괄 등록 모달 */}
+        <ExcelImportModal
+            isOpen={showExcelModal}
+            onClose={() => setShowExcelModal(false)}
+            targetCategory={targetCategory}
+            allCategories={allCategories}
+            existingItems={items}
+            onImport={(nextItems, nextCategories, summary) => {
+              setItems(nextItems);
+              setCustomCategories(nextCategories);
+              scheduleCloudPush(nextItems, nextCategories, stats);
+              showToast(
+                  `📊 엑셀 등록 완료! 신규 ${summary.added}개 추가` +
+                  (summary.updated > 0 ? `, ${summary.updated}개 업데이트` : '') +
+                  (summary.skipped > 0 ? `, ${summary.skipped}개 중복 건너뜀` : '')
+              );
+            }}
+        />
+
         {activeTab === 'study' && (
             <div className="study-main">
               {/* 특수 모드(벼락치기 또는 별표/취약 필터)가 켜져 있을 때만 슬림 배너 표시 */}
@@ -2424,44 +2428,6 @@ export function App() {
                   </>
               )}
 
-              {/* 플래시카드 앞뒷면 방향 선택 바 (영→한 / 한→영 / 한·영 랜덤) */}
-              {studyMode === 'flashcard' && (
-                  <div className="direction-switch-bar" role="group" aria-label="플래시카드 앞뒷면 방향">
-                    <button
-                        type="button"
-                        className={`direction-btn ${flashcardDirection === 'en-ko' ? 'active' : ''}`}
-                        onClick={() => {
-                          setFlashcardDirection('en-ko');
-                          resetCardInteraction();
-                        }}
-                    >
-                      영 → 한
-                    </button>
-                    <button
-                        type="button"
-                        className={`direction-btn ${flashcardDirection === 'ko-en' ? 'active' : ''}`}
-                        onClick={() => {
-                          setFlashcardDirection('ko-en');
-                          resetCardInteraction();
-                        }}
-                    >
-                      <ArrowLeftRight size={13} />
-                      한 → 영
-                    </button>
-                    <button
-                        type="button"
-                        className={`direction-btn random ${flashcardDirection === 'random' ? 'active' : ''}`}
-                        onClick={() => {
-                          setFlashcardDirection('random');
-                          resetCardInteraction();
-                        }}
-                    >
-                      <Shuffle size={13} />
-                      한/영 랜덤
-                    </button>
-                  </div>
-              )}
-
               {/* 카드 하단: 꼭 필요한 버튼만 남긴 단 1줄의 슬림 컨트롤 바 */}
               <div className="sleek-control-bar">
                 <div className="mode-switch">
@@ -2552,10 +2518,13 @@ export function App() {
                 </button>
                 <button
                     type="button"
-                    className={`sub-tab-btn ${addSubTab === 'bulk' ? 'active' : ''}`}
-                    onClick={() => setAddSubTab('bulk')}
+                    className={`sub-tab-btn ${addSubTab === 'excel' ? 'active' : ''}`}
+                    onClick={() => {
+                      setAddSubTab('excel');
+                      setShowExcelModal(true);
+                    }}
                 >
-                  일괄 붙여넣기
+                  엑셀 파일로 추가
                 </button>
               </div>
 
@@ -2744,18 +2713,36 @@ export function App() {
                   </form>
               )}
 
-              {addSubTab === 'bulk' && (
-                  <>
-              <textarea
-                  className="bulk-textarea"
-                  placeholder="early - (형용사) 이른, (부사) 일찍 | I often take walks in the early morning."
-                  value={bulkText}
-                  onChange={(e) => setBulkText(e.target.value)}
-              />
-                    <button type="button" className="primary-full-btn" onClick={handleAddBulk}>
-                      [{normalizeCategory(targetCategory)}]에 일괄 등록하기
-                    </button>
-                  </>
+              {addSubTab === 'excel' && (
+                  <div className="excel-tab-card">
+                    <div className="excel-tab-icon">
+                      <FileSpreadsheet size={28} />
+                    </div>
+                    <h3 className="excel-tab-title">엑셀 파일로 단어 일괄 등록</h3>
+                    <p className="excel-tab-desc">
+                      대량의 단어를 엑셀(<code>.xlsx</code>, <code>.xls</code>, <code>.csv</code>) 파일로 한 번에 등록하고 자동 유닛 분류 및 FSRS 망각곡선 복습에 추가합니다.
+                    </p>
+                    <div className="excel-tab-actions">
+                      <button
+                          type="button"
+                          className="submit-btn"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '10px 18px' }}
+                          onClick={() => setShowExcelModal(true)}
+                      >
+                        <FileSpreadsheet size={16} />
+                        엑셀 등록 팝업창 열기
+                      </button>
+                      <button
+                          type="button"
+                          className="secondary-btn"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                          onClick={downloadSampleExcelFile}
+                      >
+                        <Download size={14} />
+                        샘플 엑셀 양식 다운로드
+                      </button>
+                    </div>
+                  </div>
               )}
             </div>
         )}

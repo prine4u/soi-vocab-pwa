@@ -133,16 +133,33 @@ export function extractEnglishOnly(rawExample?: string): string {
 export function formatFolderSegment(raw: string): string {
     let s = raw.trim();
     if (!s) return '';
-    s = s.replace(/([A-Za-z가-힣])(\d)/g, '$1 $2').replace(/(\d)([A-Za-z가-힣])/g, '$1 $2');
+    // 영문과 숫자 사이 띄어쓰기 정규화 (예: Unit1 -> Unit 1, Lesson2 -> Lesson 2)
+    s = s.replace(/([A-Za-z])(\d)/g, '$1 $2').replace(/(\d)([A-Za-z])/g, '$1 $2');
     s = s.replace(/\s+/g, ' ');
+    // 영문 단어 첫 글자 대문자화
     s = s.replace(/[A-Za-z]+/g, (word) => {
         return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     });
+    // 영문 유닛 넘버링 2자리 정규화 (Unit 1 -> Unit 01)
     s = s.replace(
         /\b(Unit|Day|Part|Chapter|Lesson)\s+(\d)\b/gi,
         (_, prefix: string, digit: string) =>
             `${prefix.charAt(0).toUpperCase() + prefix.slice(1).toLowerCase()} 0${digit}`
     );
+    // 한글 레슨/유닛/단원 넘버링 정규화 (레슨1 -> 레슨 01, 유닛01 -> 유닛 01)
+    s = s.replace(
+        /(레슨|유닛|단원|파트|챕터)\s*(\d)\b/g,
+        (_, prefix: string, digit: string) => `${prefix} 0${digit}`
+    );
+    s = s.replace(
+        /(레슨|유닛|단원|파트|챕터)\s*(\d{2,})\b/g,
+        (_, prefix: string, digit: string) => `${prefix} ${digit}`
+    );
+    // 제1강 / 제01강 정규화 (제 1 강 -> 제01강)
+    s = s.replace(/제\s*(\d)\s*강/g, '제0$1강');
+    s = s.replace(/제\s*(\d{2,})\s*강/g, '제$1강');
+    // 1강 -> 1강, 01강 -> 01강 (공백 정리)
+    s = s.replace(/(\d+)\s*강/g, '$1강');
     return s.trim();
 }
 
