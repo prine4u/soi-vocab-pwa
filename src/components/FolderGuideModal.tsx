@@ -42,7 +42,7 @@ export const FolderGuideModal: React.FC<FolderGuideModalProps> = ({ isOpen, onCl
           </p>
           <div className="guide-card-tree-preview">
             <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>
-              ★ 일빵빵 기초영어 <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>(1단계: 시리즈 대분류)</span>
+              ★ 영어책이름 <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>(1단계: 책/시리즈 대분류)</span>
             </div>
             <div style={{ paddingLeft: 16, borderLeft: '1.5px dashed #cbd5e1', marginLeft: 6 }}>
               <div style={{ fontWeight: 700, color: '#0284c7', margin: '3px 0' }}>
@@ -55,7 +55,7 @@ export const FolderGuideModal: React.FC<FolderGuideModalProps> = ({ isOpen, onCl
                 └ 📁 2권
               </div>
               <div style={{ paddingLeft: 16, borderLeft: '1.5px dashed #cbd5e1', marginLeft: 6, color: '#64748b' }}>
-                <div>└ 📄 31강, 32강, 33강...</div>
+                <div>└ 📄 01강, 02강, 03강...</div>
               </div>
             </div>
           </div>
@@ -71,19 +71,19 @@ export const FolderGuideModal: React.FC<FolderGuideModalProps> = ({ isOpen, onCl
             <div className="guide-step-item">
               <span className="guide-step-badge yellow">1단계</span>
               <div className="guide-step-body">
-                폴더 목록에서 <code>★ 일빵빵 기초영어 2</code> 옆의 <strong>연필(✏️) 수정 아이콘</strong>을 누릅니다.
+                폴더 목록에서 변경할 기존 폴더 옆의 <strong>연필(✏️) 수정 아이콘</strong>을 누릅니다.
               </div>
             </div>
             <div className="guide-step-item">
               <span className="guide-step-badge yellow">2단계</span>
               <div className="guide-step-body">
-                이름을 <strong><code>일빵빵 기초영어/2권</code></strong>으로 슬래시를 넣어 수정하고 확인을 누릅니다.
+                이름을 <strong><code>영어책이름/1권</code></strong> (또는 <code>책이름/1권</code>)처럼 슬래시를 넣어 수정하고 확인을 누릅니다.
               </div>
             </div>
             <div className="guide-step-item">
               <span className="guide-step-badge yellow">완료!</span>
               <div className="guide-step-body">
-                기존 700개 단어(31강~47강 등)가 자동으로 <strong>[일빵빵 기초영어]</strong> 아래의 <strong>[2권]</strong> 폴더로 한 번에 쏙 이동하여 3단계 계층 트리가 즉시 완성됩니다!
+                기존에 등록되어 있던 하위 단어들이 자동으로 <strong>[영어책이름]</strong> 아래의 <strong>[1권]</strong> 폴더로 한 번에 쏙 이동하여 3단계 계층 트리가 즉시 완성됩니다!
               </div>
             </div>
           </div>
@@ -99,13 +99,13 @@ export const FolderGuideModal: React.FC<FolderGuideModalProps> = ({ isOpen, onCl
             <div className="guide-step-item">
               <span className="guide-step-badge">새 폴더</span>
               <div className="guide-step-body">
-                상단 첫 번째 칸에 <code>일빵빵 기초영어/1권</code>, 두 번째 칸에 <code>01강</code>을 적고 <strong>[+ 생성]</strong>을 누르면 3단계 폴더가 즉시 만들어집니다.
+                상단 첫 번째 칸에 <code>영어책이름/1권</code>, 두 번째 칸에 <code>01강</code>을 적고 <strong>[+ 생성]</strong>을 누르면 3단계 폴더가 즉시 만들어집니다.
               </div>
             </div>
             <div className="guide-step-item">
               <span className="guide-step-badge">+ 버튼</span>
               <div className="guide-step-body">
-                목록에서 <code>2권</code> 옆의 <strong>`+` 버튼</strong>을 누르면 그 바로 아래에 들어갈 <code>35강</code>을 원클릭으로 추가할 수 있습니다.
+                목록에서 <code>1권</code> 옆의 <strong>`+` 버튼</strong>을 누르면 그 바로 아래에 들어갈 <code>02강</code>을 원클릭으로 추가할 수 있습니다.
               </div>
             </div>
           </div>

@@ -45,9 +45,9 @@ export const ExcelGuideModal: React.FC<ExcelGuideModalProps> = ({ isOpen, onClos
               <div className="guide-step-body">
                 <div><strong>기본 폴더 선택 + 엑셀 유닛 열 활용 (가장 쉬운 방법)</strong></div>
                 <div style={{ marginTop: 4, color: '#475569' }}>
-                  1. 엑셀 업로드 창의 <strong>[단어가 등록될 기본 폴더]</strong>에서 <code>일빵빵 기초영어/2권</code>을 선택합니다.<br />
-                  2. 엑셀 파일의 <strong>'유닛/폴더'</strong> 열에는 <code>31강</code>, <code>32강</code>처럼 단원 번호만 적습니다.<br />
-                  👉 <strong>결과:</strong> 자동으로 <code>★ 일빵빵 기초영어 &gt; 2권 &gt; 31강</code>으로 3단계 자동 분류되어 들어갑니다!
+                  1. 엑셀 업로드 창의 <strong>[단어가 등록될 기본 폴더]</strong>에서 <code>영어책이름/1권</code> (또는 <code>책이름/1권</code>)을 선택합니다.<br />
+                  2. 엑셀 파일의 <strong>'유닛/폴더'</strong> 열에는 <code>01강</code>, <code>02강</code>처럼 단원 번호만 적습니다.<br />
+                  👉 <strong>결과:</strong> 자동으로 <code>★ 영어책이름 &gt; 1권 &gt; 01강</code>으로 3단계 자동 분류되어 들어갑니다!
                 </div>
               </div>
             </div>
@@ -59,10 +59,10 @@ export const ExcelGuideModal: React.FC<ExcelGuideModalProps> = ({ isOpen, onClos
                 <div><strong>엑셀 '유닛/폴더' 열에 전체 경로 직접 입력 (파일 1개로 여러 권 한 번에!)</strong></div>
                 <div style={{ marginTop: 4, color: '#475569' }}>
                   엑셀의 '유닛/폴더' 열에 슬래시(<code>/</code>)를 넣어 전체 경로를 직접 적어둡니다:<br />
-                  • <code>일빵빵 기초영어/1권/01강</code><br />
-                  • <code>일빵빵 기초영어/2권/31강</code><br />
-                  • <code>일빵빵 기초영어/3권/61강</code><br />
-                  👉 <strong>결과:</strong> 엑셀 파일 하나만 올려도 1권, 2권, 3권의 각 강별로 3단계 폴더가 쏙쏙 자동 생성되어 분류됩니다!
+                  • <code>영어책이름/1권/01강</code><br />
+                  • <code>영어책이름/1권/02강</code><br />
+                  • <code>영어책이름/2권/01강</code><br />
+                  👉 <strong>결과:</strong> 엑셀 파일 하나만 올려도 1권, 2권 등 각 권의 강별로 3단계 폴더가 쏙쏙 자동 생성되어 분류됩니다!
                 </div>
               </div>
             </div>
@@ -98,7 +98,7 @@ export const ExcelGuideModal: React.FC<ExcelGuideModalProps> = ({ isOpen, onClos
                   <td>형용사</td>
                   <td>[ə́ːrli]</td>
                   <td>I wake up early in the morning.</td>
-                  <td><span style={{ background: '#fef08a', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>31강</span></td>
+                  <td><span style={{ background: '#fef08a', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>01강</span></td>
                 </tr>
                 <tr>
                   <td><strong>curious</strong></td>
@@ -106,7 +106,7 @@ export const ExcelGuideModal: React.FC<ExcelGuideModalProps> = ({ isOpen, onClos
                   <td>형용사</td>
                   <td>[kjúəriəs]</td>
                   <td>Children are naturally curious.</td>
-                  <td><span style={{ background: '#fef08a', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>32강</span></td>
+                  <td><span style={{ background: '#fef08a', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>02강</span></td>
                 </tr>
                 <tr>
                   <td><strong>challenge</strong></td>
@@ -114,7 +114,7 @@ export const ExcelGuideModal: React.FC<ExcelGuideModalProps> = ({ isOpen, onClos
                   <td>명사</td>
                   <td>[tʃǽlindʒ]</td>
                   <td>A great challenge.</td>
-                  <td><span style={{ background: '#e0f2fe', padding: '1px 5px', borderRadius: 4, fontWeight: 700, color: '#0369a1' }}>일빵빵 기초영어/2권/33강</span></td>
+                  <td><span style={{ background: '#e0f2fe', padding: '1px 5px', borderRadius: 4, fontWeight: 700, color: '#0369a1' }}>영어책이름/1권/03강</span></td>
                 </tr>
               </tbody>
             </table>

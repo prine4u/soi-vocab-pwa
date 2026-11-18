@@ -6,9 +6,6 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
-  HelpCircle,
-  ChevronDown,
-  ChevronUp,
   Folder,
   Layers,
   Sparkles,
@@ -58,7 +55,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
   const [useExcelUnit, setUseExcelUnit] = useState<boolean>(true);
   const [duplicateAction, setDuplicateAction] = useState<'skip' | 'overwrite' | 'allow'>('skip');
-  const [showGuide, setShowGuide] = useState<boolean>(false);
   const [showGuideModal, setShowGuideModal] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -303,33 +299,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             <FileSpreadsheet size={19} color="#16a34a" />
             엑셀 파일로 단어 일괄 등록
           </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <button
-              type="button"
-              className="helper-chip guide-btn"
-              onClick={() => setShowGuideModal(true)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4,
-                background: '#fef08a',
-                color: '#854d0e',
-                border: '1px solid #facc15',
-                fontWeight: 700,
-                fontSize: '0.74rem',
-                padding: '4px 9px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-              }}
-              title="엑셀 작성법 및 3단계 폴더 분류 설명서 열기"
-            >
-              <HelpCircle size={14} />
-              엑셀 설명서
-            </button>
-            <button type="button" className="mini-icon-btn" onClick={handleClose}>
-              <X size={16} />
-            </button>
-          </div>
+          <button type="button" className="mini-icon-btn" onClick={handleClose}>
+            <X size={16} />
+          </button>
         </div>
 
         <div className="excel-modal-body">
@@ -367,97 +339,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 양식 다운로드
               </button>
             </div>
-          </div>
-
-          {/* 1. 작성 가이드 및 샘플 양식 아코디언 */}
-          <div className="excel-guide-card">
-            <div
-              className="excel-guide-header"
-              onClick={() => setShowGuide((prev) => !prev)}
-              role="button"
-              tabIndex={0}
-            >
-              <div className="excel-guide-title">
-                <HelpCircle size={14} color="#eab308" />
-                <span>엑셀 미리보기 및 상세 규칙 펼치기</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {showGuide ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-              </div>
-            </div>
-
-            {showGuide && (
-              <div className="excel-guide-content">
-                <p className="excel-guide-desc">
-                  첫 번째 줄에 <strong>열 이름(헤더)</strong>을 넣고 작성해 주세요. (지원 파일: <code>.xlsx</code>, <code>.xls</code>, <code>.csv</code>)
-                </p>
-
-                <div className="excel-table-preview">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>단어 (Word) <span className="req">*필수</span></th>
-                        <th>뜻 (Meaning) <span className="req">*필수</span></th>
-                        <th>품사 (POS)</th>
-                        <th>발음기호 (Phonetic)</th>
-                        <th>예문 (Example)</th>
-                        <th>유닛/폴더 (Unit)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td><strong>early</strong></td>
-                        <td>이른, 일찍</td>
-                        <td>형용사</td>
-                        <td>[ə́ːrli]</td>
-                        <td>I wake up early in the morning.</td>
-                        <td><span className="sample-unit-tag">Unit 01</span></td>
-                      </tr>
-                      <tr>
-                        <td><strong>curious</strong></td>
-                        <td>호기심 많은</td>
-                        <td>형용사</td>
-                        <td>[kjúəriəs]</td>
-                        <td>Children are naturally curious.</td>
-                        <td><span className="sample-unit-tag">레슨 01</span></td>
-                      </tr>
-                      <tr>
-                        <td><strong>magazine</strong></td>
-                        <td>잡지</td>
-                        <td>명사</td>
-                        <td>[mæ̀gəzíːn]</td>
-                        <td>She bought a magazine.</td>
-                        <td><span className="sample-unit-tag">제01강</span> (또는 1강)</td>
-                      </tr>
-                      <tr>
-                        <td><strong>challenge</strong></td>
-                        <td>도전, 도전하다</td>
-                        <td>명사</td>
-                        <td>[tʃǽlindʒ]</td>
-                        <td>A great challenge.</td>
-                        <td><span className="sample-unit-tag">능률영어/Lesson 01</span></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="excel-folder-rule-box">
-                  <div className="rule-box-title">📁 책 제목과 하위 유닛/강 구분 원리 (3단계 계층 폴더 지원)</div>
-                  <ul className="rule-list">
-                    <li>
-                      <strong>슬래시(<code>/</code>)로 단계 구분:</strong> <code>시리즈 / 권 / 강·유닛</code> 다단계 계층 구조를 갖습니다.
-                      (예: <code>일빵빵 기초영어/2권/31강</code>, <code>Vocabulary Engine/Unit 10</code>)
-                    </li>
-                    <li>
-                      <strong>엑셀 유닛 열 자동 결합:</strong> 기본 폴더로 <code>일빵빵 기초영어/2권</code>을 선택하고 엑셀 유닛 열에 <code>31강</code>, <code>32강</code>처럼 적어두면 <strong>일빵빵 기초영어 &gt; 2권 &gt; 31강</strong>으로 3단계 자동 분류되어 들어갑니다!
-                    </li>
-                    <li>
-                      <strong>전체 경로 직접 작성도 가능:</strong> 엑셀에 <code>일빵빵 기초영어/2권/31강</code>처럼 전체 경로를 적어두면 해당 책과 유닛으로 즉시 등록됩니다.
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* 2. 등록 옵션 설정 */}
@@ -515,7 +396,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                       <input
                         type="text"
                         className="mini-input"
-                        placeholder="예: 일빵빵 기초영어, 일빵빵 기초영어/2권, 워드마스터"
+                        placeholder="예: 영어책이름, 영어책이름/1권, 워드마스터"
                         value={newBookTitle}
                         onChange={(e) => setNewBookTitle(e.target.value)}
                         list="existing-books-datalist"
@@ -532,7 +413,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                       <input
                         type="text"
                         className="mini-input"
-                        placeholder="예: 2권, 31강, Lesson 01, Unit 01"
+                        placeholder="예: 1권, 01강, Lesson 01, Unit 01"
                         value={newUnitName}
                         onChange={(e) => setNewUnitName(e.target.value)}
                       />

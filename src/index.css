@@ -631,11 +631,21 @@ body {
 }
 
 .gg-modal-header {
+    position: relative;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     border-bottom: 1px solid var(--border);
     padding-bottom: 12px;
+    min-height: 36px;
+}
+
+.gg-modal-header .mini-icon-btn,
+.gg-modal-header .modal-close-btn {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
 }
 
 .gg-modal-title {
@@ -644,7 +654,9 @@ body {
     color: #0f172a;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
+    text-align: center;
 }
 
 .fsrs-guide-box {
@@ -2215,11 +2227,20 @@ body {
 }
 
 .guide-modal-header {
+    position: relative;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     border-bottom: 1px solid var(--border);
     padding-bottom: 12px;
+    min-height: 36px;
+}
+
+.guide-modal-header .mini-icon-btn {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
 }
 
 .guide-modal-title {
@@ -2228,7 +2249,9 @@ body {
     color: #0f172a;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
+    text-align: center;
 }
 
 .guide-section {

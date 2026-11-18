@@ -1683,41 +1683,17 @@ export function App() {
             <div className="gg-modal-backdrop" onClick={() => setShowGgModal(false)}>
               <div className="gg-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="gg-modal-header">
-              <span className="gg-modal-title">
-                <FolderOpen size={18} />
-                문제집 폴더 선택 & 관리
-              </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button
-                        type="button"
-                        className="helper-chip guide-btn"
-                        onClick={() => setShowFolderGuideModal(true)}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          background: '#fef08a',
-                          color: '#854d0e',
-                          border: '1px solid #facc15',
-                          fontWeight: 700,
-                          fontSize: '0.74rem',
-                          padding: '4px 9px',
-                          borderRadius: '8px',
-                          cursor: 'pointer',
-                        }}
-                        title="3단계 폴더 관리법 및 사용 설명서 열기"
-                    >
-                      <HelpCircle size={14} />
-                      폴더 설명서
-                    </button>
-                    <button
-                        type="button"
-                        className="mini-icon-btn"
-                        onClick={() => setShowGgModal(false)}
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
+                  <span className="gg-modal-title">
+                    <FolderOpen size={18} />
+                    문제집 폴더 선택 & 관리
+                  </span>
+                  <button
+                      type="button"
+                      className="mini-icon-btn"
+                      onClick={() => setShowGgModal(false)}
+                  >
+                    <X size={16} />
+                  </button>
                 </div>
 
                 <div className="gg-box">
@@ -1743,14 +1719,14 @@ export function App() {
                     <input
                         type="text"
                         className="mini-input"
-                        placeholder="시리즈/책 (예: 일빵빵 기초영어 또는 일빵빵/2권)"
+                        placeholder="시리즈/책 (예: 영어책이름 또는 영어책이름/1권)"
                         value={newParentFolder}
                         onChange={(e) => setNewParentFolder(e.target.value)}
                     />
                     <input
                         type="text"
                         className="mini-input"
-                        placeholder="하위 권/강 (예: 2권 또는 31강)"
+                        placeholder="하위 권/강 (예: 1권 또는 01강)"
                         value={newChildFolder}
                         onChange={(e) => setNewChildFolder(e.target.value)}
                     />
