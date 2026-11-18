@@ -1586,12 +1586,57 @@ export function App() {
                       </button>
                     </div>
 
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, margin: '6px 0 2px' }}>
+                      <button
+                          type="button"
+                          className="helper-chip"
+                          style={{ fontSize: '0.68rem', padding: '2px 8px' }}
+                          onClick={() => {
+                            const allCollapsed: Record<string, boolean> = {};
+                            folderTree.forEach((g) => {
+                              allCollapsed[g.parent] = true;
+                            });
+                            setCollapsedParents(allCollapsed);
+                          }}
+                      >
+                        모두 접기
+                      </button>
+                      <button
+                          type="button"
+                          className="helper-chip"
+                          style={{ fontSize: '0.68rem', padding: '2px 8px' }}
+                          onClick={() => setCollapsedParents({})}
+                      >
+                        모두 펼치기
+                      </button>
+                    </div>
+
                     {folderTree.map((group, gIdx) => {
                       const parentCounts = getFolderCounts(group.parent);
                       const isParentSelected = studyCategory === group.parent;
+                      const isCollapsed = !!collapsedParents[group.parent];
                       return (
                           <div key={group.parent} className="folder-tree-group">
                             <div className="folder-item-wrap">
+                              {group.children.length > 0 && (
+                                  <button
+                                      type="button"
+                                      className="folder-expand-btn"
+                                      onClick={() =>
+                                          setCollapsedParents((prev) => ({
+                                            ...prev,
+                                            [group.parent]: !prev[group.parent],
+                                          }))
+                                      }
+                                      title={isCollapsed ? '하위 유닛 펼치기' : '하위 유닛 접기'}
+                                  >
+                                    {isCollapsed ? (
+                                        <ChevronRight size={13} />
+                                    ) : (
+                                        <ChevronDown size={13} />
+                                    )}
+                                  </button>
+                              )}
                               <button
                                   type="button"
                                   className={`folder-item ${isParentSelected ? 'active' : ''}`}
@@ -1604,7 +1649,7 @@ export function App() {
                                   }}
                               >
                           <span className="folder-item-left">
-                            <FolderOpen size={15} />
+                            {isParentSelected || !isCollapsed ? <FolderOpen size={15} /> : <Folder size={15} />}
                             <span className="folder-name">★ {group.parent}</span>
                           </span>
                                 <span className="folder-count">
@@ -1655,7 +1700,7 @@ export function App() {
                               </button>
                             </div>
 
-                            {group.children.length > 0 && (
+                            {!isCollapsed && group.children.length > 0 && (
                                 <div className="folder-sub-list">
                                   {group.children.map((child, cIdx) => {
                                     const childCounts = getFolderCounts(child.fullPath);
