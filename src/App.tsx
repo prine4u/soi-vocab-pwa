@@ -93,9 +93,55 @@ import {
 import { ExcelImportModal } from './components/ExcelImportModal';
 import { downloadSampleExcelFile } from './utils/excelImport';
 
-interface FolderTreeNode {
-  parent: string;
-  children: Array<{ fullPath: string; childName: string }>;
+interface CategoryTreeNode {
+  name: string;
+  fullPath: string;
+  depth: number;
+  children: CategoryTreeNode[];
+}
+
+function buildCategoryTree(allCategories: string[]): CategoryTreeNode[] {
+  const rootMap = new Map<string, CategoryTreeNode>();
+
+  allCategories.forEach((path) => {
+    const segments = path.split('/').map((s) => s.trim()).filter(Boolean);
+    if (segments.length === 0) return;
+
+    let currentMap = rootMap;
+    let currentPath = '';
+
+    segments.forEach((seg, depth) => {
+      currentPath = currentPath ? `${currentPath}/${seg}` : seg;
+      if (!currentMap.has(seg)) {
+        currentMap.set(seg, {
+          name: seg,
+          fullPath: currentPath,
+          depth,
+          children: [],
+        });
+      }
+      const node = currentMap.get(seg)!;
+      let childMap = (node as any)._childMap as Map<string, CategoryTreeNode> | undefined;
+      if (!childMap) {
+        childMap = new Map<string, CategoryTreeNode>();
+        (node as any)._childMap = childMap;
+      }
+      currentMap = childMap;
+    });
+  });
+
+  function mapToArray(map: Map<string, CategoryTreeNode>): CategoryTreeNode[] {
+    const list: CategoryTreeNode[] = [];
+    map.forEach((node) => {
+      const childMap = (node as any)._childMap as Map<string, CategoryTreeNode> | undefined;
+      delete (node as any)._childMap;
+      node.children = childMap ? mapToArray(childMap) : [];
+      list.push(node);
+    });
+    return list;
+  }
+
+  return mapToArray(rootMap);
 }
 
 interface BeforeInstallPromptEvent extends Event {
@@ -358,21 +404,8 @@ export function App() {
     return ordered;
   }, [customCategories, items]);
 
-  const folderTree = useMemo<FolderTreeNode[]>(() => {
-    const map = new Map<string, Array<{ fullPath: string; childName: string }>>();
-    allCategories.forEach((path) => {
-      const parts = path.split('/');
-      const parent = parts[0].trim();
-      const childName = parts.slice(1).join('/').trim();
-      if (!map.has(parent)) map.set(parent, []);
-      if (childName) {
-        map.get(parent)!.push({ fullPath: path, childName });
-      }
-    });
-    return Array.from(map.entries()).map(([parent, children]) => ({
-      parent,
-      children,
-    }));
+  const categoryTree = useMemo<CategoryTreeNode[]>(() => {
+    return buildCategoryTree(allCategories);
   }, [allCategories]);
 
   const getFolderCounts = (folderPath: string) => {
@@ -620,26 +653,53 @@ export function App() {
     showToast(`↩️ "${lastSnap.wordLabel}" 카드로 되돌렸습니다.`);
   };
 
-  const handleMoveParentFolder = (parentName: string, direction: 'up' | 'down') => {
-    const idx = folderTree.findIndex((g) => g.parent === parentName);
-    if (idx < 0) return;
-    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (swapIdx < 0 || swapIdx >= folderTree.length) return;
+  const handleMoveTreeNode = (fullPath: string, direction: 'up' | 'down') => {
+    const segments = fullPath.split('/');
+    const nodeName = segments[segments.length - 1];
+    const parentPrefix = segments.slice(0, -1).join('/');
 
-    const nextTree = [...folderTree];
-    const temp = nextTree[idx];
-    nextTree[idx] = nextTree[swapIdx];
-    nextTree[swapIdx] = temp;
+    const uniqueChildSegments: string[] = [];
+    allCategories.forEach((cat) => {
+      if (parentPrefix) {
+        if (cat === parentPrefix || cat.startsWith(`${parentPrefix}/`)) {
+          const sub = cat.slice(parentPrefix.length + 1);
+          const firstSeg = sub.split('/')[0];
+          if (firstSeg && !uniqueChildSegments.includes(firstSeg)) {
+            uniqueChildSegments.push(firstSeg);
+          }
+        }
+      } else {
+        const firstSeg = cat.split('/')[0];
+        if (firstSeg && !uniqueChildSegments.includes(firstSeg)) {
+          uniqueChildSegments.push(firstSeg);
+        }
+      }
+    });
+
+    const cIdx = uniqueChildSegments.indexOf(nodeName);
+    if (cIdx < 0) return;
+    const swapIdx = direction === 'up' ? cIdx - 1 : cIdx + 1;
+    if (swapIdx < 0 || swapIdx >= uniqueChildSegments.length) return;
+
+    const temp = uniqueChildSegments[cIdx];
+    uniqueChildSegments[cIdx] = uniqueChildSegments[swapIdx];
+    uniqueChildSegments[swapIdx] = temp;
 
     const nextCategories: string[] = [];
-    nextTree.forEach((group) => {
-      if (group.children.length === 0) {
-        nextCategories.push(group.parent);
-      } else {
-        if (allCategories.includes(group.parent)) {
-          nextCategories.push(group.parent);
+    uniqueChildSegments.forEach((seg) => {
+      const targetPrefix = parentPrefix ? `${parentPrefix}/${seg}` : seg;
+      allCategories.forEach((cat) => {
+        if (cat === targetPrefix || cat.startsWith(`${targetPrefix}/`)) {
+          if (!nextCategories.includes(cat)) {
+            nextCategories.push(cat);
+          }
         }
-        group.children.forEach((ch) => nextCategories.push(ch.fullPath));
+      });
+    });
+
+    allCategories.forEach((cat) => {
+      if (!nextCategories.includes(cat)) {
+        nextCategories.push(cat);
       }
     });
 
@@ -647,48 +707,28 @@ export function App() {
     scheduleCloudPush(items, nextCategories, stats);
   };
 
-  const handleMoveChildFolder = (
-      parentName: string,
-      fullPath: string,
-      direction: 'up' | 'down'
-  ) => {
-    const groupIdx = folderTree.findIndex((g) => g.parent === parentName);
-    if (groupIdx < 0) return;
-    const children = [...folderTree[groupIdx].children];
-    const cIdx = children.findIndex((c) => c.fullPath === fullPath);
-    if (cIdx < 0) return;
-    const swapIdx = direction === 'up' ? cIdx - 1 : cIdx + 1;
-    if (swapIdx < 0 || swapIdx >= children.length) return;
-
-    const temp = children[cIdx];
-    children[cIdx] = children[swapIdx];
-    children[swapIdx] = temp;
-
-    const nextTree = folderTree.map((g, i) =>
-        i === groupIdx ? { ...g, children } : g
-    );
-
-    const nextCategories: string[] = [];
-    nextTree.forEach((group) => {
-      if (group.children.length === 0) {
-        nextCategories.push(group.parent);
-      } else {
-        if (allCategories.includes(group.parent)) {
-          nextCategories.push(group.parent);
+  const handleCollapseAll = () => {
+    const allCollapsed: Record<string, boolean> = {};
+    const traverse = (nodes: CategoryTreeNode[]) => {
+      nodes.forEach((n) => {
+        if (n.children.length > 0) {
+          allCollapsed[n.fullPath] = true;
+          traverse(n.children);
         }
-        group.children.forEach((ch) => nextCategories.push(ch.fullPath));
-      }
-    });
+      });
+    };
+    traverse(categoryTree);
+    setCollapsedParents(allCollapsed);
+  };
 
-    setCustomCategories(nextCategories);
-    scheduleCloudPush(items, nextCategories, stats);
+  const handleExpandAll = () => {
+    setCollapsedParents({});
   };
 
   const handleAddFolderHierarchy = () => {
-    const p = formatFolderSegment(newParentFolder.replace(/\//g, ' '));
-    const c = formatFolderSegment(newChildFolder.replace(/\//g, ' '));
-    if (!p && !c) return;
-    const fullPath = p && c ? `${p}/${c}` : p || c;
+    const rawCombined = [newParentFolder.trim(), newChildFolder.trim()].filter(Boolean).join('/');
+    if (!rawCombined) return;
+    const fullPath = normalizeCategory(rawCombined);
     const nextCats = Array.from(new Set([...allCategories, fullPath]));
     setCustomCategories(nextCats);
     setTargetCategory(fullPath);
@@ -701,8 +741,8 @@ export function App() {
 
   const handleQuickAddSubfolder = (parentName: string) => {
     const sub = window.prompt(
-        `[${parentName}] 상위 폴더 아래에 만들 하위 폴더(유닛) 이름을 입력하세요:`,
-        'Unit 01'
+        `[${parentName}] 아래에 만들 하위 폴더(권/강/단원) 이름을 입력하세요:`,
+        '01강'
     );
     if (!sub || !sub.trim()) return;
     const fullPath = normalizeCategory(`${parentName}/${sub.trim()}`);
@@ -769,6 +809,125 @@ export function App() {
     if (isCategoryMatch(listCategory, folderPath)) setListCategory('ALL');
     scheduleCloudPush(nextItems, nextCats, stats);
     showToast(`🗑️ [${folderPath}] 폴더가 삭제되었습니다.`);
+  };
+
+  const renderCategoryNode = (
+      node: CategoryTreeNode,
+      isModal: boolean,
+      siblings: CategoryTreeNode[],
+      sIdx: number
+  ): React.ReactNode => {
+    const counts = getFolderCounts(node.fullPath);
+    const isSelected = isModal ? studyCategory === node.fullPath : listCategory === node.fullPath;
+    const isCollapsed = !!collapsedParents[node.fullPath];
+    const hasChildren = node.children.length > 0;
+
+    return (
+      <div key={node.fullPath} className={`tree-node-wrap depth-${node.depth}`}>
+        <div className="folder-item-wrap">
+          {hasChildren ? (
+            <button
+                type="button"
+                className="folder-expand-btn"
+                onClick={() =>
+                    setCollapsedParents((prev) => ({
+                      ...prev,
+                      [node.fullPath]: !prev[node.fullPath],
+                    }))
+                }
+                title={isCollapsed ? '하위 폴더 펼치기' : '하위 폴더 접기'}
+            >
+              {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+            </button>
+          ) : (
+            <span style={{ width: 17, display: 'inline-block' }} />
+          )}
+
+          <button
+              type="button"
+              className={`folder-item ${isSelected ? 'active' : ''}`}
+              onClick={() => {
+                if (isModal) {
+                  setStudyCategory(node.fullPath);
+                  setTargetCategory(node.fullPath);
+                  setIsCramMode(false);
+                  resetCardInteraction();
+                  setShowGgModal(false);
+                } else {
+                  setListCategory(node.fullPath);
+                }
+              }}
+          >
+            <span className="folder-item-left">
+              {node.depth === 0 ? (
+                isSelected || !isCollapsed ? <FolderOpen size={15} /> : <Folder size={15} />
+              ) : hasChildren ? (
+                isSelected || !isCollapsed ? <FolderOpen size={14} /> : <Folder size={14} />
+              ) : (
+                <Folder size={13} />
+              )}
+              <span className="folder-name">
+                {node.depth === 0 ? `★ ${node.name}` : node.name}
+              </span>
+            </span>
+            <span className="folder-count">
+              {isModal ? `${counts.due}/${counts.total}` : `${counts.total}단어`}
+            </span>
+          </button>
+
+          <button
+              type="button"
+              className="folder-action-btn"
+              title="위로 이동"
+              disabled={sIdx === 0}
+              onClick={() => handleMoveTreeNode(node.fullPath, 'up')}
+          >
+            <ArrowUp size={12} />
+          </button>
+          <button
+              type="button"
+              className="folder-action-btn"
+              title="아래로 이동"
+              disabled={sIdx === siblings.length - 1}
+              onClick={() => handleMoveTreeNode(node.fullPath, 'down')}
+          >
+            <ArrowDown size={12} />
+          </button>
+          <button
+              type="button"
+              className="folder-action-btn"
+              title="하위 단원/유닛 추가"
+              onClick={() => handleQuickAddSubfolder(node.fullPath)}
+          >
+            <Plus size={12} />
+          </button>
+          <button
+              type="button"
+              className="folder-action-btn"
+              title="폴더 이름/경로 변경"
+              onClick={() => handleRenameFolder(node.fullPath)}
+          >
+            <Pencil size={12} />
+          </button>
+          <button
+              type="button"
+              className="folder-action-btn danger"
+              title="폴더 삭제"
+              onClick={() => handleDeleteCategory(node.fullPath)}
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
+
+        {!isCollapsed && hasChildren && (
+          <div className="tree-children-container">
+            {node.children.map((child, cIdx) =>
+              renderCategoryNode(child, isModal, node.children, cIdx)
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const handleResetFolderStats = () => {
@@ -1543,14 +1702,14 @@ export function App() {
                     <input
                         type="text"
                         className="mini-input"
-                        placeholder="상위 책 (예: Vocabulary Engine)"
+                        placeholder="시리즈/책 (예: 일빵빵 기초영어 또는 일빵빵/2권)"
                         value={newParentFolder}
                         onChange={(e) => setNewParentFolder(e.target.value)}
                     />
                     <input
                         type="text"
                         className="mini-input"
-                        placeholder="하위 유닛 (예: Unit 10)"
+                        placeholder="하위 권/강 (예: 2권 또는 31강)"
                         value={newChildFolder}
                         onChange={(e) => setNewChildFolder(e.target.value)}
                     />
@@ -1591,13 +1750,7 @@ export function App() {
                           type="button"
                           className="helper-chip"
                           style={{ fontSize: '0.68rem', padding: '2px 8px' }}
-                          onClick={() => {
-                            const allCollapsed: Record<string, boolean> = {};
-                            folderTree.forEach((g) => {
-                              allCollapsed[g.parent] = true;
-                            });
-                            setCollapsedParents(allCollapsed);
-                          }}
+                          onClick={handleCollapseAll}
                       >
                         모두 접기
                       </button>
@@ -1605,177 +1758,15 @@ export function App() {
                           type="button"
                           className="helper-chip"
                           style={{ fontSize: '0.68rem', padding: '2px 8px' }}
-                          onClick={() => setCollapsedParents({})}
+                          onClick={handleExpandAll}
                       >
                         모두 펼치기
                       </button>
                     </div>
 
-                    {folderTree.map((group, gIdx) => {
-                      const parentCounts = getFolderCounts(group.parent);
-                      const isParentSelected = studyCategory === group.parent;
-                      const isCollapsed = !!collapsedParents[group.parent];
-                      return (
-                          <div key={group.parent} className="folder-tree-group">
-                            <div className="folder-item-wrap">
-                              {group.children.length > 0 && (
-                                  <button
-                                      type="button"
-                                      className="folder-expand-btn"
-                                      onClick={() =>
-                                          setCollapsedParents((prev) => ({
-                                            ...prev,
-                                            [group.parent]: !prev[group.parent],
-                                          }))
-                                      }
-                                      title={isCollapsed ? '하위 유닛 펼치기' : '하위 유닛 접기'}
-                                  >
-                                    {isCollapsed ? (
-                                        <ChevronRight size={13} />
-                                    ) : (
-                                        <ChevronDown size={13} />
-                                    )}
-                                  </button>
-                              )}
-                              <button
-                                  type="button"
-                                  className={`folder-item ${isParentSelected ? 'active' : ''}`}
-                                  onClick={() => {
-                                    setStudyCategory(group.parent);
-                                    setTargetCategory(group.parent);
-                                    setIsCramMode(false);
-                                    resetCardInteraction();
-                                    setShowGgModal(false);
-                                  }}
-                              >
-                          <span className="folder-item-left">
-                            {isParentSelected || !isCollapsed ? <FolderOpen size={15} /> : <Folder size={15} />}
-                            <span className="folder-name">★ {group.parent}</span>
-                          </span>
-                                <span className="folder-count">
-                            {parentCounts.due}/{parentCounts.total}
-                          </span>
-                              </button>
-                              <button
-                                  type="button"
-                                  className="folder-action-btn"
-                                  title="위로 이동"
-                                  disabled={gIdx === 0}
-                                  onClick={() => handleMoveParentFolder(group.parent, 'up')}
-                              >
-                                <ArrowUp size={13} />
-                              </button>
-                              <button
-                                  type="button"
-                                  className="folder-action-btn"
-                                  title="아래로 이동"
-                                  disabled={gIdx === folderTree.length - 1}
-                                  onClick={() => handleMoveParentFolder(group.parent, 'down')}
-                              >
-                                <ArrowDown size={13} />
-                              </button>
-                              <button
-                                  type="button"
-                                  className="folder-action-btn"
-                                  title="하위 유닛 추가"
-                                  onClick={() => handleQuickAddSubfolder(group.parent)}
-                              >
-                                <Plus size={13} />
-                              </button>
-                              <button
-                                  type="button"
-                                  className="folder-action-btn"
-                                  title="폴더 이름 변경"
-                                  onClick={() => handleRenameFolder(group.parent)}
-                              >
-                                <Pencil size={13} />
-                              </button>
-                              <button
-                                  type="button"
-                                  className="folder-action-btn danger"
-                                  title="폴더 삭제"
-                                  onClick={() => handleDeleteCategory(group.parent)}
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-
-                            {!isCollapsed && group.children.length > 0 && (
-                                <div className="folder-sub-list">
-                                  {group.children.map((child, cIdx) => {
-                                    const childCounts = getFolderCounts(child.fullPath);
-                                    const isChildSelected = studyCategory === child.fullPath;
-                                    return (
-                                        <div key={child.fullPath} className="folder-item-wrap">
-                                          <button
-                                              type="button"
-                                              className={`folder-item ${isChildSelected ? 'active' : ''}`}
-                                              onClick={() => {
-                                                setStudyCategory(child.fullPath);
-                                                setTargetCategory(child.fullPath);
-                                                setIsCramMode(false);
-                                                resetCardInteraction();
-                                                setShowGgModal(false);
-                                              }}
-                                          >
-                                  <span className="folder-item-left">
-                                    <Folder size={13} />
-                                    <span className="folder-name">{child.childName}</span>
-                                  </span>
-                                            <span className="folder-count">
-                                    {childCounts.due}/{childCounts.total}
-                                  </span>
-                                          </button>
-                                          <button
-                                              type="button"
-                                              className="folder-action-btn"
-                                              title="위로 이동"
-                                              disabled={cIdx === 0}
-                                              onClick={() =>
-                                                  handleMoveChildFolder(group.parent, child.fullPath, 'up')
-                                              }
-                                          >
-                                            <ArrowUp size={12} />
-                                          </button>
-                                          <button
-                                              type="button"
-                                              className="folder-action-btn"
-                                              title="아래로 이동"
-                                              disabled={cIdx === group.children.length - 1}
-                                              onClick={() =>
-                                                  handleMoveChildFolder(
-                                                      group.parent,
-                                                      child.fullPath,
-                                                      'down'
-                                                  )
-                                              }
-                                          >
-                                            <ArrowDown size={12} />
-                                          </button>
-                                          <button
-                                              type="button"
-                                              className="folder-action-btn"
-                                              title="유닛 이름/경로 변경"
-                                              onClick={() => handleRenameFolder(child.fullPath)}
-                                          >
-                                            <Pencil size={12} />
-                                          </button>
-                                          <button
-                                              type="button"
-                                              className="folder-action-btn danger"
-                                              title="유닛 삭제"
-                                              onClick={() => handleDeleteCategory(child.fullPath)}
-                                          >
-                                            <Trash2 size={12} />
-                                          </button>
-                                        </div>
-                                    );
-                                  })}
-                                </div>
-                            )}
-                          </div>
-                      );
-                    })}
+                    {categoryTree.map((node, nIdx) =>
+                      renderCategoryNode(node, true, categoryTree, nIdx)
+                    )}
                   </div>
                 </div>
 
@@ -2825,151 +2816,28 @@ export function App() {
                     </button>
                   </div>
 
-                  {folderTree.map((group, gIdx) => {
-                    const parentCounts = getFolderCounts(group.parent);
-                    const isParentActive = listCategory === group.parent;
-                    const isCollapsed = !!collapsedParents[group.parent];
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, margin: '4px 0 8px' }}>
+                    <button
+                        type="button"
+                        className="helper-chip"
+                        style={{ fontSize: '0.68rem', padding: '2px 8px' }}
+                        onClick={handleCollapseAll}
+                    >
+                      모두 접기
+                    </button>
+                    <button
+                        type="button"
+                        className="helper-chip"
+                        style={{ fontSize: '0.68rem', padding: '2px 8px' }}
+                        onClick={handleExpandAll}
+                    >
+                      모두 펼치기
+                    </button>
+                  </div>
 
-                    return (
-                        <div key={group.parent} className="folder-tree-group">
-                          <div className="folder-item-wrap">
-                            {group.children.length > 0 && (
-                                <button
-                                    type="button"
-                                    className="folder-expand-btn"
-                                    onClick={() =>
-                                        setCollapsedParents((prev) => ({
-                                          ...prev,
-                                          [group.parent]: !prev[group.parent],
-                                        }))
-                                    }
-                                >
-                                  {isCollapsed ? (
-                                      <ChevronRight size={13} />
-                                  ) : (
-                                      <ChevronDown size={13} />
-                                  )}
-                                </button>
-                            )}
-                            <button
-                                type="button"
-                                className={`folder-item ${isParentActive ? 'active' : ''}`}
-                                onClick={() => setListCategory(group.parent)}
-                            >
-                        <span className="folder-item-left">
-                          {isParentActive ? <FolderOpen size={14} /> : <Folder size={14} />}
-                          <span className="folder-name">★ {group.parent}</span>
-                        </span>
-                              <span className="folder-count">{parentCounts.total}단어</span>
-                            </button>
-                            <button
-                                type="button"
-                                className="folder-action-btn"
-                                title="위로 이동"
-                                disabled={gIdx === 0}
-                                onClick={() => handleMoveParentFolder(group.parent, 'up')}
-                            >
-                              <ArrowUp size={12} />
-                            </button>
-                            <button
-                                type="button"
-                                className="folder-action-btn"
-                                title="아래로 이동"
-                                disabled={gIdx === folderTree.length - 1}
-                                onClick={() => handleMoveParentFolder(group.parent, 'down')}
-                            >
-                              <ArrowDown size={12} />
-                            </button>
-                            <button
-                                type="button"
-                                className="folder-action-btn"
-                                title="하위 유닛 추가"
-                                onClick={() => handleQuickAddSubfolder(group.parent)}
-                            >
-                              <Plus size={12} />
-                            </button>
-                            <button
-                                type="button"
-                                className="folder-action-btn"
-                                title="폴더 이름 변경"
-                                onClick={() => handleRenameFolder(group.parent)}
-                            >
-                              <Pencil size={12} />
-                            </button>
-                            <button
-                                type="button"
-                                className="folder-action-btn danger"
-                                title="폴더 삭제"
-                                onClick={() => handleDeleteCategory(group.parent)}
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
-
-                          {!isCollapsed && group.children.length > 0 && (
-                              <div className="folder-sub-list">
-                                {group.children.map((child, cIdx) => {
-                                  const childCounts = getFolderCounts(child.fullPath);
-                                  const isChildActive = listCategory === child.fullPath;
-                                  return (
-                                      <div key={child.fullPath} className="folder-item-wrap">
-                                        <button
-                                            type="button"
-                                            className={`folder-item ${isChildActive ? 'active' : ''}`}
-                                            onClick={() => setListCategory(child.fullPath)}
-                                        >
-                                <span className="folder-item-left">
-                                  <Folder size={13} />
-                                  <span className="folder-name">{child.childName}</span>
-                                </span>
-                                          <span className="folder-count">{childCounts.total}단어</span>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="folder-action-btn"
-                                            title="위로 이동"
-                                            disabled={cIdx === 0}
-                                            onClick={() =>
-                                                handleMoveChildFolder(group.parent, child.fullPath, 'up')
-                                            }
-                                        >
-                                          <ArrowUp size={11} />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="folder-action-btn"
-                                            title="아래로 이동"
-                                            disabled={cIdx === group.children.length - 1}
-                                            onClick={() =>
-                                                handleMoveChildFolder(group.parent, child.fullPath, 'down')
-                                            }
-                                        >
-                                          <ArrowDown size={11} />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="folder-action-btn"
-                                            title="이름 변경"
-                                            onClick={() => handleRenameFolder(child.fullPath)}
-                                        >
-                                          <Pencil size={11} />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="folder-action-btn danger"
-                                            title="삭제"
-                                            onClick={() => handleDeleteCategory(child.fullPath)}
-                                        >
-                                          <Trash2 size={11} />
-                                        </button>
-                                      </div>
-                                  );
-                                })}
-                              </div>
-                          )}
-                        </div>
-                    );
-                  })}
+                  {categoryTree.map((node, nIdx) =>
+                    renderCategoryNode(node, false, categoryTree, nIdx)
+                  )}
                 </div>
               </div>
 

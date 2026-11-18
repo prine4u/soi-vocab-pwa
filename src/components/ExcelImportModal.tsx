@@ -83,28 +83,31 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     return Array.from(set);
   }, [allCategories]);
 
-  const groupedFolderList = useMemo(() => {
-    const map = new Map<string, string[]>();
+  const folderOptions = useMemo(() => {
+    const list: { full: string; label: string; depth: number }[] = [];
     allCategories.forEach((cat) => {
-      if (cat.includes('/')) {
-        const [book, unit] = cat.split('/');
-        if (!map.has(book)) map.set(book, []);
-        map.get(book)!.push(unit);
-      } else {
-        if (!map.has(cat)) map.set(cat, []);
-      }
+      const parts = cat.split('/');
+      let current = '';
+      parts.forEach((p, depth) => {
+        current = current ? `${current}/${p}` : p;
+        if (!list.some((item) => item.full === current)) {
+          const indent = '\u00A0\u00A0\u00A0'.repeat(depth);
+          const icon = depth === 0 ? '📁 ★ ' : '└ ';
+          list.push({
+            full: current,
+            label: `${indent}${icon}${p}`,
+            depth,
+          });
+        }
+      });
     });
-
-    return Array.from(map.entries()).map(([book, units]) => ({
-      book,
-      units: units.map((u) => ({ unit: u, full: `${book}/${u}` })),
-    }));
+    return list;
   }, [allCategories]);
 
   // 최종 기본 목적지 폴더 계산
   const effectiveBaseFolder = useMemo(() => {
     if (isNewFolderMode) {
-      const bookClean = formatFolderSegment(newBookTitle) || 'Vocabulary Engine';
+      const bookClean = normalizeCategory(newBookTitle) || 'Vocabulary Engine';
       const unitClean = formatFolderSegment(newUnitName);
       return unitClean ? `${bookClean}/${unitClean}` : bookClean;
     }
@@ -205,7 +208,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     if (validRows.length === 0) return;
 
     const baseFolder = effectiveBaseFolder;
-    const parentBook = baseFolder.includes('/') ? baseFolder.split('/')[0] : baseFolder;
 
     const updatedCategoriesSet = new Set<string>(allCategories);
     updatedCategoriesSet.add(baseFolder);
@@ -222,17 +224,17 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       const lowerWord = row.word.trim().toLowerCase();
       const existing = existingWordMap.get(lowerWord);
 
-      // 폴더 결정
+      // 폴더 결정 (다단계 계층 지원: 기본 폴더 아래에 엑셀 유닛 결합)
       let targetFolder = baseFolder;
       if (useExcelUnit && row.unit) {
         if (row.unit.includes('/')) {
-          // 엑셀에 이미 '책제목/유닛' 형태로 전체 경로가 적혀 있는 경우
+          // 엑셀에 이미 '대분류/중분류/소분류' 형태로 전체 경로가 적혀 있는 경우
           targetFolder = normalizeCategory(row.unit);
         } else {
-          // '레슨01', '제01강', '1강', 'Unit 01' 등 유닛명만 있는 경우 -> 현재 책 이름과 결합
+          // '31강', '레슨01', '제01강', 'Unit 01' 등 유닛명만 있는 경우 -> 선택된 기본 폴더 아래로 자동 분류
           const cleanUnit = formatFolderSegment(row.unit);
           if (cleanUnit) {
-            targetFolder = `${parentBook}/${cleanUnit}`;
+            targetFolder = `${baseFolder}/${cleanUnit}`;
           }
         }
       }
@@ -390,17 +392,17 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 </div>
 
                 <div className="excel-folder-rule-box">
-                  <div className="rule-box-title">📁 상위 책 제목과 하위 유닛/강 구분 원리</div>
+                  <div className="rule-box-title">📁 책 제목과 하위 유닛/강 구분 원리 (3단계 계층 폴더 지원)</div>
                   <ul className="rule-list">
                     <li>
-                      <strong>슬래시(<code>/</code>)로 구분:</strong> <code>책 제목 / 하위 유닛</code> 형태로 2단계 계층 구조를 갖습니다.
-                      (예: <code>Vocabulary Engine/Unit 10</code>, <code>워드마스터/1강</code>, <code>능률중학/레슨 01</code>)
+                      <strong>슬래시(<code>/</code>)로 단계 구분:</strong> <code>시리즈 / 권 / 강·유닛</code> 다단계 계층 구조를 갖습니다.
+                      (예: <code>일빵빵 기초영어/2권/31강</code>, <code>Vocabulary Engine/Unit 10</code>)
                     </li>
                     <li>
-                      <strong>엑셀 유닛 열 자동 결합:</strong> 엑셀의 '유닛/폴더' 열에 <code>레슨01</code>, <code>제01강</code>, <code>1강</code>, <code>Unit 01</code>처럼 하위 이름만 적어두면, 아래 옵션에서 지정한 <strong>상위 책 제목</strong> 아래로 자동 분류되어 들어갑니다!
+                      <strong>엑셀 유닛 열 자동 결합:</strong> 기본 폴더로 <code>일빵빵 기초영어/2권</code>을 선택하고 엑셀 유닛 열에 <code>31강</code>, <code>32강</code>처럼 적어두면 <strong>일빵빵 기초영어 &gt; 2권 &gt; 31강</strong>으로 3단계 자동 분류되어 들어갑니다!
                     </li>
                     <li>
-                      <strong>전체 경로 직접 작성도 가능:</strong> 엑셀에 <code>능률중학/Lesson 01</code>처럼 적어두면 해당 책과 유닛으로 즉시 등록됩니다.
+                      <strong>전체 경로 직접 작성도 가능:</strong> 엑셀에 <code>일빵빵 기초영어/2권/31강</code>처럼 전체 경로를 적어두면 해당 책과 유닛으로 즉시 등록됩니다.
                     </li>
                   </ul>
                 </div>
@@ -445,15 +447,10 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                     value={selectedFolder}
                     onChange={(e) => setSelectedFolder(e.target.value)}
                   >
-                    {groupedFolderList.map((group) => (
-                      <optgroup key={group.book} label={`📚 책: ${group.book}`}>
-                        <option value={group.book}>★ {group.book} (책 전체/상위)</option>
-                        {group.units.map((u) => (
-                          <option key={u.full} value={u.full}>
-                            &nbsp;&nbsp;└ {u.unit}
-                          </option>
-                        ))}
-                      </optgroup>
+                    {folderOptions.map((opt) => (
+                      <option key={opt.full} value={opt.full}>
+                        {opt.label}
+                      </option>
                     ))}
                   </select>
                   <div className="folder-tip-text">
@@ -464,11 +461,11 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 <div className="new-folder-builder">
                   <div className="new-folder-inputs-grid">
                     <div className="new-folder-field">
-                      <label className="field-sub-label">1. 책 제목 (상위 폴더, 필수)</label>
+                      <label className="field-sub-label">1. 책 / 시리즈 제목 (상위 폴더, 필수)</label>
                       <input
                         type="text"
                         className="mini-input"
-                        placeholder="예: 능률 중학영어, 워드마스터, EBS 수능"
+                        placeholder="예: 일빵빵 기초영어, 일빵빵 기초영어/2권, 워드마스터"
                         value={newBookTitle}
                         onChange={(e) => setNewBookTitle(e.target.value)}
                         list="existing-books-datalist"
@@ -481,11 +478,11 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                     </div>
 
                     <div className="new-folder-field">
-                      <label className="field-sub-label">2. 하위 단원/유닛 (선택 사항)</label>
+                      <label className="field-sub-label">2. 하위 권 / 단원 / 강 (선택 사항)</label>
                       <input
                         type="text"
                         className="mini-input"
-                        placeholder="예: Lesson 01, 제01강, 1강, Unit 01"
+                        placeholder="예: 2권, 31강, Lesson 01, Unit 01"
                         value={newUnitName}
                         onChange={(e) => setNewUnitName(e.target.value)}
                       />
