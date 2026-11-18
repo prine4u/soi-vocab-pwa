@@ -47,6 +47,12 @@ import {
   Zap,
   Shuffle,
   FileSpreadsheet,
+  PlayCircle,
+  Play,
+  Pause,
+  SkipBack,
+  SkipForward,
+  Repeat,
 } from 'lucide-react';
 import type {
   VocabItem,
@@ -163,6 +169,10 @@ type FlashcardDirection = 'en-ko' | 'ko-en' | 'random';
 const SPEECH_RATES = [0.5, 0.7, 0.8, 0.9, 1.0];
 const SPEECH_RATE_STORAGE_KEY = 'soi_vocab_speech_rate_v1';
 const FLASHCARD_DIR_STORAGE_KEY = 'soi_vocab_flashcard_dir_v1';
+const AUTOPLAY_INTERVAL_STORAGE_KEY = 'soi_vocab_autoplay_interval_v1';
+const AUTO_PLAY_INTERVAL_OPTIONS = [
+  1, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+];
 
 function formatInterval(due: Date, now: Date): string {
   const diffMs = Math.max(0, due.getTime() - now.getTime());
@@ -284,6 +294,22 @@ export function App() {
   const [showHint, setShowHint] = useState<boolean>(false);
   const cardStartTimeRef = useRef<number>(Date.now());
   const spellingInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 자동 재생 (깜빡이 암기 모드) 상태
+  const [isAutoPlayPlaying, setIsAutoPlayPlaying] = useState<boolean>(true);
+  const [autoPlayInterval, setAutoPlayInterval] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(AUTOPLAY_INTERVAL_STORAGE_KEY));
+    return AUTO_PLAY_INTERVAL_OPTIONS.includes(saved) ? saved : 2;
+  });
+  const [autoPlayIndex, setAutoPlayIndex] = useState<number>(0);
+  const [isAutoPlayLoop, setIsAutoPlayLoop] = useState<boolean>(true);
+  const [autoPlayPhase, setAutoPlayPhase] = useState<'front' | 'back'>('front');
+  const autoPlayTimerRef = useRef<number | null>(null);
+
+  const handleUpdateAutoPlayInterval = (sec: number) => {
+    setAutoPlayInterval(sec);
+    localStorage.setItem(AUTOPLAY_INTERVAL_STORAGE_KEY, String(sec));
+  };
 
   const [addSubTab, setAddSubTab] = useState<'camera' | 'single' | 'excel'>('camera');
   const [showExcelModal, setShowExcelModal] = useState<boolean>(false);
@@ -482,7 +508,27 @@ export function App() {
     });
   }, [filteredPoolItems, isCramMode, cramQueueIds]);
 
-  const currentItem = dueItems[0] ?? null;
+  const autoPlayPool = useMemo(() => {
+    if (isCramMode && cramQueueIds.length > 0) {
+      const itemMap = new Map(filteredPoolItems.map((it) => [it.id, it]));
+      return cramQueueIds
+          .map((id) => itemMap.get(id))
+          .filter((it): it is VocabItem => !!it);
+    }
+    if (dueItems.length > 0) {
+      return dueItems;
+    }
+    return filteredPoolItems;
+  }, [isCramMode, cramQueueIds, filteredPoolItems, dueItems]);
+
+  const autoPlayCurrentItem = autoPlayPool[autoPlayIndex] ?? null;
+  const currentItem = studyMode === 'autoplay' ? autoPlayCurrentItem : (dueItems[0] ?? null);
+
+  useEffect(() => {
+    if (studyMode === 'autoplay' && autoPlayIndex >= autoPlayPool.length && autoPlayPool.length > 0) {
+      setAutoPlayIndex(0);
+    }
+  }, [studyMode, autoPlayIndex, autoPlayPool.length]);
   const effectiveDirection: 'en-ko' | 'ko-en' =
     flashcardDirection === 'random' ? randomSide : flashcardDirection;
   const isKoToEn = effectiveDirection === 'ko-en';
@@ -572,6 +618,7 @@ export function App() {
     setTypedAnswer('');
     setSpellingResult(null);
     setShowHint(false);
+    setAutoPlayPhase('front');
     setRandomSide(Math.random() < 0.5 ? 'en-ko' : 'ko-en');
     cardStartTimeRef.current = Date.now();
   };
@@ -583,6 +630,133 @@ export function App() {
     });
     resetCardInteraction();
   };
+
+  // 자동 재생 (깜빡이 암기 모드) 시작, 종료, 이동
+  const startAutoPlay = () => {
+    if (autoPlayPool.length === 0) {
+      showToast('학습할 단어가 없습니다.');
+      return;
+    }
+    setStudyMode('autoplay');
+    setIsAutoPlayPlaying(true);
+    setAutoPlayPhase('front');
+    setIsFlipped(false);
+    setAutoPlayIndex(0);
+    showToast('⚡ 자동 재생 (깜빡이 모드) 시작! 눈과 귀로 편하게 암기하세요.');
+  };
+
+  const exitAutoPlay = () => {
+    setStudyMode('flashcard');
+    setIsAutoPlayPlaying(false);
+    if (autoPlayTimerRef.current !== null) {
+      window.clearTimeout(autoPlayTimerRef.current);
+      autoPlayTimerRef.current = null;
+    }
+    window.speechSynthesis?.cancel();
+    resetCardInteraction();
+  };
+
+  const handleAutoplayStep = (direction: 'prev' | 'next') => {
+    if (autoPlayTimerRef.current !== null) {
+      window.clearTimeout(autoPlayTimerRef.current);
+      autoPlayTimerRef.current = null;
+    }
+    window.speechSynthesis?.cancel();
+
+    if (direction === 'next') {
+      if (autoPlayIndex + 1 < autoPlayPool.length) {
+        setAutoPlayIndex((prev) => prev + 1);
+      } else if (isAutoPlayLoop && autoPlayPool.length > 0) {
+        setAutoPlayIndex(0);
+      }
+    } else {
+      if (autoPlayIndex > 0) {
+        setAutoPlayIndex((prev) => prev - 1);
+      } else if (isAutoPlayLoop && autoPlayPool.length > 0) {
+        setAutoPlayIndex(Math.max(0, autoPlayPool.length - 1));
+      }
+    }
+    setAutoPlayPhase('front');
+    setIsFlipped(false);
+  };
+
+  // 자동 재생 (깜빡이 모드) 타이머 및 발음 실행 루프
+  useEffect(() => {
+    if (activeTab !== 'study' || studyMode !== 'autoplay' || !isAutoPlayPlaying || !autoPlayCurrentItem) {
+      if (autoPlayTimerRef.current !== null) {
+        window.clearTimeout(autoPlayTimerRef.current);
+        autoPlayTimerRef.current = null;
+      }
+      return;
+    }
+
+    // 1단계: 앞면 (단어 발음 -> 2초 뒤 뜻 화면 전환)
+    if (autoPlayPhase === 'front') {
+      setIsFlipped(false);
+      if (!isKoToEn) {
+        speakWord(autoPlayCurrentItem.word, speechRate);
+      }
+      const ms = Math.round(autoPlayInterval * 1000);
+      autoPlayTimerRef.current = window.setTimeout(() => {
+        setIsFlipped(true);
+        setAutoPlayPhase('back');
+      }, ms);
+
+      return () => {
+        if (autoPlayTimerRef.current !== null) {
+          window.clearTimeout(autoPlayTimerRef.current);
+          autoPlayTimerRef.current = null;
+        }
+      };
+    }
+
+    // 2단계: 뒷면 (뜻 화면 전환 + 예문 발음 -> 다음 카드로 이동)
+    if (autoPlayPhase === 'back') {
+      setIsFlipped(true);
+      if (!isKoToEn) {
+        speakExampleOrWord(autoPlayCurrentItem, speechRate);
+      } else {
+        speakWord(autoPlayCurrentItem.word, speechRate);
+      }
+
+      // 뒷면은 뜻과 예문을 보고 들을 수 있도록 여유 있게 대기 (기본 interval + 0.5초)
+      const ms = Math.round((autoPlayInterval + 0.5) * 1000);
+      autoPlayTimerRef.current = window.setTimeout(() => {
+        if (autoPlayIndex + 1 < autoPlayPool.length) {
+          setAutoPlayIndex((prev) => prev + 1);
+          setAutoPlayPhase('front');
+          setIsFlipped(false);
+        } else if (isAutoPlayLoop && autoPlayPool.length > 0) {
+          setAutoPlayIndex(0);
+          setAutoPlayPhase('front');
+          setIsFlipped(false);
+          showToast('🔁 1회독 완료! 처음부터 반복 재생합니다.');
+        } else {
+          setIsAutoPlayPlaying(false);
+          showToast('🎉 모든 단어 깜빡이 암기를 마쳤습니다!');
+        }
+      }, ms);
+
+      return () => {
+        if (autoPlayTimerRef.current !== null) {
+          window.clearTimeout(autoPlayTimerRef.current);
+          autoPlayTimerRef.current = null;
+        }
+      };
+    }
+  }, [
+    activeTab,
+    studyMode,
+    isAutoPlayPlaying,
+    autoPlayPhase,
+    autoPlayIndex,
+    autoPlayCurrentItem?.id,
+    autoPlayInterval,
+    isAutoPlayLoop,
+    isKoToEn,
+    speechRate,
+    autoPlayPool.length,
+  ]);
 
   // 안키 보조 기능 1: 자유 복습(벼락치기) 시작 및 종료
   const startCramMode = (overrideFilter?: StudyFilter) => {
@@ -1082,6 +1256,30 @@ export function App() {
       }
 
       if (!currentItem) return;
+
+      // 자동 재생 (깜빡이 모드) 단축키
+      if (studyMode === 'autoplay') {
+        if (e.code === 'Space') {
+          e.preventDefault();
+          setIsAutoPlayPlaying((prev) => !prev);
+          return;
+        }
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          handleAutoplayStep('prev');
+          return;
+        }
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          handleAutoplayStep('next');
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          exitAutoPlay();
+          return;
+        }
+      }
 
       // Space: 플래시카드 뒤집기
       if (e.code === 'Space' && studyMode === 'flashcard' && !isFlipped) {
@@ -2096,15 +2294,33 @@ export function App() {
                     </p>
                     <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
                       {filteredPoolItems.length > 0 && (
-                          <button
-                              type="button"
-                              className="submit-btn"
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '10px 16px' }}
-                              onClick={() => startCramMode()}
-                          >
-                            <Zap size={15} />
-                            자유 복습 ({filteredPoolItems.length}단어 더 보기)
-                          </button>
+                          <>
+                            <button
+                                type="button"
+                                className="submit-btn"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '10px 16px' }}
+                                onClick={() => startCramMode()}
+                            >
+                              <Zap size={15} />
+                              자유 복습 ({filteredPoolItems.length}단어 더 보기)
+                            </button>
+                            <button
+                                type="button"
+                                className="submit-btn"
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 5,
+                                  padding: '10px 16px',
+                                  background: '#0F172A',
+                                  color: '#FFED00',
+                                }}
+                                onClick={startAutoPlay}
+                            >
+                              <PlayCircle size={15} />
+                              ⚡ 깜빡이 암기 ({filteredPoolItems.length}단어 연속 듣기)
+                            </button>
+                          </>
                       )}
                       <button
                           type="button"
@@ -2124,17 +2340,41 @@ export function App() {
                       )}
                     </div>
                   </div>
-              ) : studyMode === 'flashcard' ? (
+              ) : studyMode === 'flashcard' || studyMode === 'autoplay' ? (
                   <>
                     <div
                         className="study-card clickable"
-                        onClick={() => setIsFlipped((prev) => !prev)}
+                        onClick={() => {
+                          if (studyMode === 'autoplay') {
+                            setIsAutoPlayPlaying((prev) => !prev);
+                          } else {
+                            setIsFlipped((prev) => !prev);
+                          }
+                        }}
                     >
+                      {studyMode === 'autoplay' && !isAutoPlayPlaying && (
+                          <div className="autoplay-pause-overlay">
+                            <div className="autoplay-pause-tag">
+                              <Pause size={14} /> 일시정지 (화면 터치 시 계속 재생)
+                            </div>
+                          </div>
+                      )}
                       <div className="card-top-row">
                         <div className="card-badges-left">
-                    <span className="badge-state">
-                      {isCramMode ? '⚡ 자유 복습' : getStateLabel(currentItem.card.state)}
-                    </span>
+                          <span
+                              className="badge-state"
+                              style={
+                                studyMode === 'autoplay'
+                                    ? { background: '#fef08a', color: '#854d0e', fontWeight: 800 }
+                                    : undefined
+                              }
+                          >
+                            {studyMode === 'autoplay'
+                                ? `⚡ 깜빡이 (${autoPlayIndex + 1}/${autoPlayPool.length})`
+                                : isCramMode
+                                ? '⚡ 자유 복습'
+                                : getStateLabel(currentItem.card.state)}
+                          </span>
                           {flashcardDirection !== 'en-ko' && (
                               <span className="dir-badge">
                                 {flashcardDirection === 'random'
@@ -2301,7 +2541,11 @@ export function App() {
 
                       <div className="flip-hint">
                         <RotateCcw size={13} />
-                        {!isFlipped
+                        {studyMode === 'autoplay'
+                            ? isAutoPlayPlaying
+                                ? '⚡ 깜빡이 자동 재생 중... (터치하면 일시정지)'
+                                : '⏸ 일시정지됨 (터치하면 다시 시작)'
+                            : !isFlipped
                             ? isKoToEn
                                 ? '카드를 터치하면 정답 영어 단어와 발음을 확인합니다'
                                 : '카드를 터치하면 뜻과 함께 영어 예문을 읽어줍니다'
@@ -2309,7 +2553,7 @@ export function App() {
                       </div>
                     </div>
 
-                    {isFlipped && (
+                    {studyMode === 'flashcard' && isFlipped && (
                         <div className="rating-section">
                           <div className="rating-grid">
                             {ratingOptions.map((opt) => (
@@ -2323,6 +2567,142 @@ export function App() {
                                   <span className="rate-interval">{opt.intervalText}</span>
                                 </button>
                             ))}
+                          </div>
+                        </div>
+                    )}
+
+                    {studyMode === 'autoplay' && (
+                        <div className="autoplay-controller-card">
+                          <div className="autoplay-top-status">
+                            <div className="autoplay-status-badge">
+                              <span className={`pulse-dot ${isAutoPlayPlaying ? 'active' : ''}`} />
+                              <strong>
+                                {isAutoPlayPlaying
+                                    ? autoPlayPhase === 'front'
+                                        ? '1단계: 단어 발음 중'
+                                        : '2단계: 뜻 & 예문 전환'
+                                    : '일시정지 중'}
+                              </strong>
+                              <span className="autoplay-phase-desc">
+                                {isAutoPlayPlaying
+                                    ? autoPlayPhase === 'front'
+                                        ? `${autoPlayInterval}초 후 뜻 화면으로 전환됩니다`
+                                        : '예문 발음 후 다음 단어로 자동 이동합니다'
+                                    : '재생 버튼 또는 화면을 터치하세요'}
+                              </span>
+                            </div>
+                            <div className="autoplay-progress-count">
+                              {autoPlayIndex + 1} / {autoPlayPool.length}
+                            </div>
+                          </div>
+
+                          <div className="autoplay-timer-track">
+                            <div
+                                key={`${autoPlayIndex}-${autoPlayPhase}-${isAutoPlayPlaying}`}
+                                className={`autoplay-timer-bar ${isAutoPlayPlaying ? 'animating' : ''}`}
+                                style={{
+                                  animationDuration: `${autoPlayPhase === 'front' ? autoPlayInterval : autoPlayInterval + 0.5}s`,
+                                  width: isAutoPlayPlaying ? undefined : autoPlayPhase === 'front' ? '50%' : '100%',
+                                }}
+                            />
+                          </div>
+
+                          <div className="autoplay-controls-row">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <button
+                                  type="button"
+                                  className="autoplay-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAutoplayStep('prev');
+                                  }}
+                                  title="이전 단어 (←)"
+                              >
+                                <SkipBack size={15} />
+                              </button>
+
+                              <button
+                                  type="button"
+                                  className={`autoplay-main-play-btn ${isAutoPlayPlaying ? 'playing' : 'paused'}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsAutoPlayPlaying((prev) => !prev);
+                                  }}
+                              >
+                                {isAutoPlayPlaying ? (
+                                    <>
+                                      <Pause size={15} />
+                                      <span>일시정지</span>
+                                    </>
+                                ) : (
+                                    <>
+                                      <Play size={15} />
+                                      <span>계속 재생</span>
+                                    </>
+                                )}
+                              </button>
+
+                              <button
+                                  type="button"
+                                  className="autoplay-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAutoplayStep('next');
+                                  }}
+                                  title="다음 단어 (→)"
+                              >
+                                <SkipForward size={15} />
+                              </button>
+
+                              <button
+                                  type="button"
+                                  className={`autoplay-btn ${isAutoPlayLoop ? 'active' : ''}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsAutoPlayLoop((prev) => !prev);
+                                  }}
+                                  title={isAutoPlayLoop ? '전체 반복 켜짐' : '전체 반복 꺼짐'}
+                              >
+                                <Repeat size={14} />
+                              </button>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <div
+                                  className="autoplay-select-wrapper"
+                                  title="재생 대기 시간 선택 (1초~20초)"
+                              >
+                                <select
+                                    className="autoplay-select-btn"
+                                    value={autoPlayInterval}
+                                    onChange={(e) => {
+                                      handleUpdateAutoPlayInterval(Number(e.target.value));
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    aria-label="재생 대기 초 선택"
+                                >
+                                  {AUTO_PLAY_INTERVAL_OPTIONS.map((sec) => (
+                                      <option key={sec} value={sec}>
+                                        {sec}초
+                                      </option>
+                                  ))}
+                                </select>
+                                <ChevronDown size={14} className="autoplay-select-arrow" />
+                              </div>
+
+                              <button
+                                  type="button"
+                                  className="secondary-btn"
+                                  style={{ padding: '6px 10px', fontSize: '0.74rem' }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    exitAutoPlay();
+                                  }}
+                                  title="깜빡이 모드 종료"
+                              >
+                                종료
+                              </button>
+                            </div>
                           </div>
                         </div>
                     )}
@@ -2494,6 +2874,7 @@ export function App() {
                       type="button"
                       className={`mode-btn ${studyMode === 'flashcard' ? 'active' : ''}`}
                       onClick={() => {
+                        if (studyMode === 'autoplay') exitAutoPlay();
                         setStudyMode('flashcard');
                         resetCardInteraction();
                       }}
@@ -2505,6 +2886,7 @@ export function App() {
                       type="button"
                       className={`mode-btn ${studyMode === 'spelling' ? 'active' : ''}`}
                       onClick={() => {
+                        if (studyMode === 'autoplay') exitAutoPlay();
                         setStudyMode('spelling');
                         resetCardInteraction();
                       }}
@@ -2512,19 +2894,43 @@ export function App() {
                     <Keyboard size={14} />
                     스펠링 테스트
                   </button>
+                  <button
+                      type="button"
+                      className={`mode-btn ${studyMode === 'autoplay' ? 'active' : ''}`}
+                      onClick={() => {
+                        if (studyMode !== 'autoplay') {
+                          startAutoPlay();
+                        }
+                      }}
+                      title="화면을 터치하지 않고 자동으로 발음과 뜻을 듣는 깜빡이 모드"
+                  >
+                    <Zap size={14} />
+                    깜빡이 암기
+                  </button>
                 </div>
                 
                 <div className="sleek-bar-right">
-                  <button
-                      type="button"
-                      className="sleek-action-btn"
-                      disabled={undoStack.length === 0}
-                      onClick={handleUndo}
-                      title="방금 넘긴 카드 되돌리기 (단축키 Z)"
-                  >
-                    <Undo2 size={14} />
-                    되돌리기
-                  </button>
+                  {studyMode === 'autoplay' ? (
+                      <button
+                          type="button"
+                          className="sleek-action-btn"
+                          onClick={exitAutoPlay}
+                          title="깜빡이 모드 닫기"
+                      >
+                        종료
+                      </button>
+                  ) : (
+                      <button
+                          type="button"
+                          className="sleek-action-btn"
+                          disabled={undoStack.length === 0}
+                          onClick={handleUndo}
+                          title="방금 넘긴 카드 되돌리기 (단축키 Z)"
+                      >
+                        <Undo2 size={14} />
+                        되돌리기
+                      </button>
+                  )}
                 </div>
               </div>
             </div>

@@ -47,6 +47,6 @@ export interface CloudSyncState {
     stats: StudyStats | null;
 }
 
-export type StudyMode = 'flashcard' | 'spelling';
+export type StudyMode = 'flashcard' | 'spelling' | 'autoplay';
 export type StudyFilter = 'all' | 'starred' | 'weak';
 export type AppTab = 'study' | 'add' | 'list';
