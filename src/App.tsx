@@ -642,7 +642,7 @@ export function App() {
   };
 
   const playSpeechQueue = (
-    queue: Array<{ text: string; lang: 'en-US' | 'ko-KR'; rate?: number }>,
+    queue: Array<{ text: string; lang: 'en-US' | 'ko-KR'; rate?: number; delayAfterMs?: number }>,
     onComplete: () => void
   ) => {
     if (!('speechSynthesis' in window) || queue.length === 0) {
@@ -710,7 +710,22 @@ export function App() {
           window.clearTimeout(timerId);
           timerId = null;
         }
-        playNext();
+
+        if (autoPlaySpeechCancelledRef.current) return;
+
+        // 마지막 발음 항목이 끝난 것이라면 추가 대기 없이 즉시 완료 콜백 호출
+        if (index >= queue.length) {
+          onComplete();
+          return;
+        }
+
+        // 반복 발음 사이에는 사용자가 편안하게 따라 읽을 수 있도록 1초(1000ms) 텀을 두고 다음 발음 진행
+        const delayMs = item.delayAfterMs ?? 1000;
+        speechTimeoutRef.current = window.setTimeout(() => {
+          if (!autoPlaySpeechCancelledRef.current) {
+            playNext();
+          }
+        }, delayMs);
       };
 
       utterance.onend = finishStep;
@@ -788,6 +803,10 @@ export function App() {
     setStudyMode('flashcard');
     setIsAutoPlayPlaying(false);
     autoPlaySpeechCancelledRef.current = true;
+    if (speechTimeoutRef.current !== null) {
+      window.clearTimeout(speechTimeoutRef.current);
+      speechTimeoutRef.current = null;
+    }
     if (autoPlayTimerRef.current !== null) {
       window.clearTimeout(autoPlayTimerRef.current);
       autoPlayTimerRef.current = null;
@@ -798,6 +817,10 @@ export function App() {
 
   const handleAutoplayStep = (direction: 'prev' | 'next') => {
     autoPlaySpeechCancelledRef.current = true;
+    if (speechTimeoutRef.current !== null) {
+      window.clearTimeout(speechTimeoutRef.current);
+      speechTimeoutRef.current = null;
+    }
     if (autoPlayTimerRef.current !== null) {
       window.clearTimeout(autoPlayTimerRef.current);
       autoPlayTimerRef.current = null;
@@ -824,10 +847,16 @@ export function App() {
   // 자동 재생 (깜빡이 모드) 타이머 및 발음 실행 루프
   useEffect(() => {
     if (activeTab !== 'study' || studyMode !== 'autoplay' || !isAutoPlayPlaying || !autoPlayCurrentItem) {
+      autoPlaySpeechCancelledRef.current = true;
+      if (speechTimeoutRef.current !== null) {
+        window.clearTimeout(speechTimeoutRef.current);
+        speechTimeoutRef.current = null;
+      }
       if (autoPlayTimerRef.current !== null) {
         window.clearTimeout(autoPlayTimerRef.current);
         autoPlayTimerRef.current = null;
       }
+      window.speechSynthesis?.cancel();
       return;
     }
 
@@ -861,6 +890,10 @@ export function App() {
 
       return () => {
         autoPlaySpeechCancelledRef.current = true;
+        if (speechTimeoutRef.current !== null) {
+          window.clearTimeout(speechTimeoutRef.current);
+          speechTimeoutRef.current = null;
+        }
         if (autoPlayTimerRef.current !== null) {
           window.clearTimeout(autoPlayTimerRef.current);
           autoPlayTimerRef.current = null;
@@ -925,6 +958,10 @@ export function App() {
 
       return () => {
         autoPlaySpeechCancelledRef.current = true;
+        if (speechTimeoutRef.current !== null) {
+          window.clearTimeout(speechTimeoutRef.current);
+          speechTimeoutRef.current = null;
+        }
         if (autoPlayTimerRef.current !== null) {
           window.clearTimeout(autoPlayTimerRef.current);
           autoPlayTimerRef.current = null;
@@ -2258,7 +2295,7 @@ export function App() {
                     <span style={{ color: '#854d0e', fontWeight: 800 }}>{autoPlayRepeatCount}회</span>
                   </div>
                   <p style={{ fontSize: '0.76rem', color: '#64748b', margin: '4px 0 8px' }}>
-                    정답 화면에서 발음을 몇 번 반복해서 들려줄지 선택합니다.
+                    정답 화면에서 발음을 몇 번 반복해서 들려줄지 선택합니다. (반복 시 따라 읽을 수 있도록 1초 간격 제공)
                   </p>
                   <div style={{ display: 'flex', gap: 8 }}>
                     {[1, 2, 3].map((cnt) => (
@@ -2933,7 +2970,9 @@ export function App() {
                                 {isAutoPlayPlaying
                                     ? autoPlayPhase === 'front'
                                         ? `${autoPlayInterval}초 후 정답 화면으로 전환됩니다`
-                                        : '답 읽기 완료 시 다음 문제로 바로 이동합니다'
+                                        : autoPlayRepeatCount > 1
+                                            ? '답 1초 간격 반복 청취 후 다음 문제로 바로 이동합니다'
+                                            : '답 읽기 완료 시 다음 문제로 바로 이동합니다'
                                     : '재생 버튼 또는 화면을 터치하세요'}
                               </span>
                             </div>
