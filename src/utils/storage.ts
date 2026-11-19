@@ -109,6 +109,40 @@ export function getSpellingPromptMeaning(meaning: string, targetWord?: string): 
 }
 
 /**
+ * 텍스트에서 첫 번째 문장 또는 단어만 추출 (문장 부호 . ? ! 또는 줄바꿈 기준)
+ */
+export function getFirstSentence(text?: string): string {
+    if (!text) return '';
+    const trimmed = text.trim();
+    if (!trimmed) return '';
+
+    // 첫 번째 줄만 분리
+    const firstLine = trimmed.split(/[\r\n]+/)[0]?.trim() || '';
+    if (!firstLine) return '';
+
+    // 마침표(.), 물음표(?), 느낌표(!) 기준으로 첫 번째 문장만 추출
+    const match = firstLine.match(/^([^.!?]+[.!?]?)/);
+    if (match && match[1]?.trim()) {
+        return match[1].trim();
+    }
+    return firstLine;
+}
+
+/**
+ * TTS 음성 읽기를 위해 한글 뜻에서 대괄호 품사 태그, 기호 등을 정돈
+ */
+export function cleanKoreanForTts(text?: string): string {
+    if (!text) return '';
+    return text
+        .replace(/\[[^\]]*\]/g, ' ')   // [명사], [동사] 등 품사 태그 제거
+        .replace(/[()]/g, ' ')         // 괄호 기호만 제거하고 안의 설명어는 유지 (예: (액체를) 붓다 -> 액체를 붓다)
+        .replace(/[0-9]+\.\s*/g, ' ')  // 1. 2. 번호 기호 제거
+        .replace(/[~•※*+]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
  * 예문 텍스트에서 한글 해석, A:/B: 기호, + 숙어 설명 줄을 제외하고 순수 영어 예문만 추출
  */
 export function extractEnglishOnly(rawExample?: string): string {

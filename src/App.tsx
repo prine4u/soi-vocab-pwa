@@ -78,6 +78,8 @@ import {
   loadCustomCategories,
   saveCustomCategories,
   extractEnglishOnly,
+  getFirstSentence,
+  cleanKoreanForTts,
   expandMeaningAbbreviations,
   getSpellingPromptMeaning,
   loadLocalUpdatedAt,
@@ -170,6 +172,8 @@ const SPEECH_RATES = [0.5, 0.7, 0.8, 0.9, 1.0];
 const SPEECH_RATE_STORAGE_KEY = 'soi_vocab_speech_rate_v1';
 const FLASHCARD_DIR_STORAGE_KEY = 'soi_vocab_flashcard_dir_v1';
 const AUTOPLAY_INTERVAL_STORAGE_KEY = 'soi_vocab_autoplay_interval_v1';
+const AUTOPLAY_REPEAT_STORAGE_KEY = 'soi_vocab_autoplay_repeat_v1';
+const AUTOPLAY_KOREAN_TTS_STORAGE_KEY = 'soi_vocab_autoplay_korean_tts_v1';
 const AUTO_PLAY_INTERVAL_OPTIONS = [
   1, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
 ];
@@ -301,14 +305,39 @@ export function App() {
     const saved = Number(localStorage.getItem(AUTOPLAY_INTERVAL_STORAGE_KEY));
     return AUTO_PLAY_INTERVAL_OPTIONS.includes(saved) ? saved : 2;
   });
+  const [autoPlayRepeatCount, setAutoPlayRepeatCount] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(AUTOPLAY_REPEAT_STORAGE_KEY));
+    return [1, 2, 3].includes(saved) ? saved : 1;
+  });
+  const [autoPlayKoreanTts, setAutoPlayKoreanTts] = useState<boolean>(() => {
+    const saved = localStorage.getItem(AUTOPLAY_KOREAN_TTS_STORAGE_KEY);
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [showAutoPlayOptionsModal, setShowAutoPlayOptionsModal] = useState<boolean>(false);
   const [autoPlayIndex, setAutoPlayIndex] = useState<number>(0);
   const [isAutoPlayLoop, setIsAutoPlayLoop] = useState<boolean>(true);
   const [autoPlayPhase, setAutoPlayPhase] = useState<'front' | 'back'>('front');
   const autoPlayTimerRef = useRef<number | null>(null);
+  const autoPlaySpeechCancelledRef = useRef<boolean>(false);
 
   const handleUpdateAutoPlayInterval = (sec: number) => {
     setAutoPlayInterval(sec);
     localStorage.setItem(AUTOPLAY_INTERVAL_STORAGE_KEY, String(sec));
+  };
+
+  const handleUpdateAutoPlayRepeatCount = (cnt: number) => {
+    setAutoPlayRepeatCount(cnt);
+    localStorage.setItem(AUTOPLAY_REPEAT_STORAGE_KEY, String(cnt));
+    showToast(`답 발음 반복: ${cnt}회로 설정되었습니다.`);
+  };
+
+  const handleToggleAutoPlayKoreanTts = () => {
+    setAutoPlayKoreanTts((prev) => {
+      const next = !prev;
+      localStorage.setItem(AUTOPLAY_KOREAN_TTS_STORAGE_KEY, String(next));
+      showToast(next ? '한글 음성 읽기(TTS) 켜짐' : '한글 음성 읽기(TTS) 꺼짐 (영어만)');
+      return next;
+    });
   };
 
   const [addSubTab, setAddSubTab] = useState<'camera' | 'single' | 'excel'>('camera');
@@ -587,6 +616,115 @@ export function App() {
     }
   };
 
+  const speakKorean = (text: string, customRate?: number) => {
+    if (!('speechSynthesis' in window) || !text.trim()) return;
+    if (speechTimeoutRef.current !== null) {
+      window.clearTimeout(speechTimeoutRef.current);
+    }
+    window.speechSynthesis.cancel();
+
+    const cleanText = text.trim();
+    speechTimeoutRef.current = window.setTimeout(() => {
+      const voices = window.speechSynthesis.getVoices();
+      const koVoice =
+        voices.find((v) => (v.lang === 'ko-KR' || v.lang === 'ko_KR') && v.localService) ||
+        voices.find((v) => v.lang.startsWith('ko') && v.localService) ||
+        voices.find((v) => v.lang === 'ko-KR' || v.lang === 'ko_KR') ||
+        voices.find((v) => v.lang.startsWith('ko'));
+
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      if (koVoice) utterance.voice = koVoice;
+      utterance.lang = 'ko-KR';
+      utterance.rate = customRate ?? 0.95;
+      utterance.pitch = 1.0;
+      window.speechSynthesis.speak(utterance);
+    }, 60);
+  };
+
+  const playSpeechQueue = (
+    queue: Array<{ text: string; lang: 'en-US' | 'ko-KR'; rate?: number }>,
+    onComplete: () => void
+  ) => {
+    if (!('speechSynthesis' in window) || queue.length === 0) {
+      onComplete();
+      return;
+    }
+
+    if (speechTimeoutRef.current !== null) {
+      window.clearTimeout(speechTimeoutRef.current);
+      speechTimeoutRef.current = null;
+    }
+    window.speechSynthesis.cancel();
+    autoPlaySpeechCancelledRef.current = false;
+
+    let index = 0;
+    const voices = window.speechSynthesis.getVoices();
+    const enVoice =
+      voices.find((v) => (v.lang === 'en-US' || v.lang === 'en_US') && v.localService) ||
+      voices.find((v) => v.lang.startsWith('en') && v.localService) ||
+      voices.find((v) => v.lang === 'en-US' || v.lang === 'en_US') ||
+      voices.find((v) => v.lang.startsWith('en'));
+
+    const koVoice =
+      voices.find((v) => (v.lang === 'ko-KR' || v.lang === 'ko_KR') && v.localService) ||
+      voices.find((v) => v.lang.startsWith('ko') && v.localService) ||
+      voices.find((v) => v.lang === 'ko-KR' || v.lang === 'ko_KR') ||
+      voices.find((v) => v.lang.startsWith('ko'));
+
+    let timerId: number | null = null;
+
+    const playNext = () => {
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+        timerId = null;
+      }
+      if (autoPlaySpeechCancelledRef.current) return;
+      if (index >= queue.length) {
+        onComplete();
+        return;
+      }
+
+      const item = queue[index++];
+      const cleanText = item.text.trim();
+      if (!cleanText) {
+        playNext();
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      if (item.lang === 'ko-KR') {
+        utterance.lang = 'ko-KR';
+        if (koVoice) utterance.voice = koVoice;
+        utterance.rate = 0.95;
+      } else {
+        utterance.lang = 'en-US';
+        if (enVoice) utterance.voice = enVoice;
+        utterance.rate = item.rate ?? speechRate;
+      }
+
+      let stepDone = false;
+      const finishStep = () => {
+        if (stepDone) return;
+        stepDone = true;
+        if (timerId !== null) {
+          window.clearTimeout(timerId);
+          timerId = null;
+        }
+        playNext();
+      };
+
+      utterance.onend = finishStep;
+      utterance.onerror = finishStep;
+
+      const maxWait = Math.max(1600, Math.round((cleanText.length / 5) * 1000) + 2000);
+      timerId = window.setTimeout(finishStep, maxWait);
+
+      window.speechSynthesis.speak(utterance);
+    };
+
+    speechTimeoutRef.current = window.setTimeout(playNext, 60);
+  };
+
   useEffect(() => {
     if (activeTab !== 'study' || studyMode !== 'flashcard' || !autoSpeak || !currentItem) {
       return;
@@ -642,12 +780,14 @@ export function App() {
     setAutoPlayPhase('front');
     setIsFlipped(false);
     setAutoPlayIndex(0);
+    autoPlaySpeechCancelledRef.current = false;
     showToast('⚡ 자동 재생 (깜빡이 모드) 시작! 눈과 귀로 편하게 암기하세요.');
   };
 
   const exitAutoPlay = () => {
     setStudyMode('flashcard');
     setIsAutoPlayPlaying(false);
+    autoPlaySpeechCancelledRef.current = true;
     if (autoPlayTimerRef.current !== null) {
       window.clearTimeout(autoPlayTimerRef.current);
       autoPlayTimerRef.current = null;
@@ -657,6 +797,7 @@ export function App() {
   };
 
   const handleAutoplayStep = (direction: 'prev' | 'next') => {
+    autoPlaySpeechCancelledRef.current = true;
     if (autoPlayTimerRef.current !== null) {
       window.clearTimeout(autoPlayTimerRef.current);
       autoPlayTimerRef.current = null;
@@ -690,12 +831,28 @@ export function App() {
       return;
     }
 
-    // 1단계: 앞면 (단어 발음 -> 2초 뒤 뜻 화면 전환)
+    // 1단계: 앞면 (문제 보여주기 + 발음 -> 설정 초 뒤 정답 화면 전환)
     if (autoPlayPhase === 'front') {
       setIsFlipped(false);
+      autoPlaySpeechCancelledRef.current = false;
+
       if (!isKoToEn) {
-        speakWord(autoPlayCurrentItem.word, speechRate);
+        // 영->한 모드: 앞면에 영어 단어가 보이므로 첫 번째 단어/문장 발음
+        const firstEng = getFirstSentence(autoPlayCurrentItem.word);
+        if (firstEng) {
+          speakWord(firstEng, speechRate);
+        }
+      } else {
+        // 한->영 모드: 앞면에 한국어 뜻이 보이므로, 한글 TTS가 켜져 있으면 한국어 첫 문장 읽기
+        if (autoPlayKoreanTts) {
+          const cleanKo = cleanKoreanForTts(autoPlayCurrentItem.meaning);
+          const firstKo = getFirstSentence(cleanKo);
+          if (firstKo) {
+            speakKorean(firstKo);
+          }
+        }
       }
+
       const ms = Math.round(autoPlayInterval * 1000);
       autoPlayTimerRef.current = window.setTimeout(() => {
         setIsFlipped(true);
@@ -703,6 +860,7 @@ export function App() {
       }, ms);
 
       return () => {
+        autoPlaySpeechCancelledRef.current = true;
         if (autoPlayTimerRef.current !== null) {
           window.clearTimeout(autoPlayTimerRef.current);
           autoPlayTimerRef.current = null;
@@ -710,38 +868,68 @@ export function App() {
       };
     }
 
-    // 2단계: 뒷면 (뜻 화면 전환 + 예문 발음 -> 다음 카드로 이동)
+    // 2단계: 뒷면 (정답 TTS 첫 문장/단어 읽기 -> TTS 완료 즉시 다음 문제로 이동)
     if (autoPlayPhase === 'back') {
       setIsFlipped(true);
+      autoPlaySpeechCancelledRef.current = false;
+
+      const queue: Array<{ text: string; lang: 'en-US' | 'ko-KR'; rate?: number }> = [];
+      const cleanKo = cleanKoreanForTts(autoPlayCurrentItem.meaning);
+      const firstKoSentence = getFirstSentence(cleanKo);
+
+      // 영어 정답: 첫 번째 문장/단어만 깔끔하게 추출
+      const engExample = extractEnglishOnly(autoPlayCurrentItem.example);
+      const rawEngAnswer = isKoToEn
+          ? (autoPlayCurrentItem.word || engExample)
+          : (autoPlayCurrentItem.word || engExample);
+      const firstEngSentence = getFirstSentence(rawEngAnswer);
+
       if (!isKoToEn) {
-        speakExampleOrWord(autoPlayCurrentItem, speechRate);
+        // 영->한 모드: 정답은 한국어 뜻(첫 문장/단어) + 영어 정답(첫 문장/단어)
+        if (autoPlayKoreanTts && firstKoSentence) {
+          queue.push({ text: firstKoSentence, lang: 'ko-KR' });
+        }
+        // 영어 발음 (반복 횟수 autoPlayRepeatCount 적용: 1회, 2회, 3회)
+        for (let i = 0; i < autoPlayRepeatCount; i++) {
+          if (firstEngSentence) {
+            queue.push({ text: firstEngSentence, lang: 'en-US', rate: speechRate });
+          }
+        }
       } else {
-        speakWord(autoPlayCurrentItem.word, speechRate);
+        // 한->영 모드: 앞면에서 이미 한글 문제를 보았으므로, 뒷면(정답)에서는 영어 정답만 지정한 횟수만큼 읽고 한글을 다시 읽지 않습니다.
+        for (let i = 0; i < autoPlayRepeatCount; i++) {
+          if (firstEngSentence) {
+            queue.push({ text: firstEngSentence, lang: 'en-US', rate: speechRate });
+          }
+        }
       }
 
-      // 뒷면은 뜻과 예문을 보고 들을 수 있도록 여유 있게 대기 (기본 interval + 0.5초)
-      const ms = Math.round((autoPlayInterval + 0.5) * 1000);
-      autoPlayTimerRef.current = window.setTimeout(() => {
-        if (autoPlayIndex + 1 < autoPlayPool.length) {
-          setAutoPlayIndex((prev) => prev + 1);
-          setAutoPlayPhase('front');
-          setIsFlipped(false);
-        } else if (isAutoPlayLoop && autoPlayPool.length > 0) {
-          setAutoPlayIndex(0);
-          setAutoPlayPhase('front');
-          setIsFlipped(false);
-          showToast('🔁 1회독 완료! 처음부터 반복 재생합니다.');
-        } else {
-          setIsAutoPlayPlaying(false);
-          showToast('🎉 모든 단어 깜빡이 암기를 마쳤습니다!');
-        }
-      }, ms);
+      playSpeechQueue(queue, () => {
+        // 답 TTS를 다 읽으면 1초 대기 없이 즉시 다음 문제로 진행!
+        autoPlayTimerRef.current = window.setTimeout(() => {
+          if (autoPlayIndex + 1 < autoPlayPool.length) {
+            setAutoPlayIndex((prev) => prev + 1);
+            setAutoPlayPhase('front');
+            setIsFlipped(false);
+          } else if (isAutoPlayLoop && autoPlayPool.length > 0) {
+            setAutoPlayIndex(0);
+            setAutoPlayPhase('front');
+            setIsFlipped(false);
+            showToast('🔁 1회독 완료! 처음부터 반복 재생합니다.');
+          } else {
+            setIsAutoPlayPlaying(false);
+            showToast('🎉 모든 단어 깜빡이 암기를 마쳤습니다!');
+          }
+        }, 60);
+      });
 
       return () => {
+        autoPlaySpeechCancelledRef.current = true;
         if (autoPlayTimerRef.current !== null) {
           window.clearTimeout(autoPlayTimerRef.current);
           autoPlayTimerRef.current = null;
         }
+        window.speechSynthesis?.cancel();
       };
     }
   }, [
@@ -752,6 +940,8 @@ export function App() {
     autoPlayIndex,
     autoPlayCurrentItem?.id,
     autoPlayInterval,
+    autoPlayRepeatCount,
+    autoPlayKoreanTts,
     isAutoPlayLoop,
     isKoToEn,
     speechRate,
@@ -2017,6 +2207,121 @@ export function App() {
           onClose={() => setShowFolderGuideModal(false)}
         />
 
+        {/* 2-1. 깜빡이 암기 전용 옵션 모달 */}
+        {showAutoPlayOptionsModal && (
+            <div className="gg-modal-backdrop" onClick={() => setShowAutoPlayOptionsModal(false)}>
+              <div className="gg-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+                <div className="gg-modal-header">
+                  <span className="gg-modal-title">
+                    <Settings2 size={18} />
+                    깜빡이 암기 옵션 설정
+                  </span>
+                  <button
+                      type="button"
+                      className="mini-icon-btn"
+                      onClick={() => setShowAutoPlayOptionsModal(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                {/* ① 문제 노출 시간 */}
+                <div className="settings-section">
+                  <div className="settings-section-title">
+                    <span>⏱️ 문제 노출 시간 (앞면 대기)</span>
+                    <span style={{ color: '#854d0e', fontWeight: 800 }}>{autoPlayInterval}초</span>
+                  </div>
+                  <p style={{ fontSize: '0.76rem', color: '#64748b', margin: '4px 0 8px' }}>
+                    문제를 눈으로 보고 머릿속으로 떠올릴 수 있도록 대기하는 시간입니다.
+                  </p>
+                  <div className="autoplay-select-wrapper" style={{ width: '100%' }}>
+                    <select
+                        className="autoplay-select-btn"
+                        style={{ width: '100%', padding: '9px 30px 9px 12px' }}
+                        value={autoPlayInterval}
+                        onChange={(e) => handleUpdateAutoPlayInterval(Number(e.target.value))}
+                    >
+                      {AUTO_PLAY_INTERVAL_OPTIONS.map((sec) => (
+                          <option key={sec} value={sec}>
+                            {sec}초 동안 문제 노출
+                          </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} className="autoplay-select-arrow" />
+                  </div>
+                </div>
+
+                {/* ② 답 발음 반복 횟수 */}
+                <div className="settings-section">
+                  <div className="settings-section-title">
+                    <span>🔁 답 발음 반복 횟수</span>
+                    <span style={{ color: '#854d0e', fontWeight: 800 }}>{autoPlayRepeatCount}회</span>
+                  </div>
+                  <p style={{ fontSize: '0.76rem', color: '#64748b', margin: '4px 0 8px' }}>
+                    정답 화면에서 발음을 몇 번 반복해서 들려줄지 선택합니다.
+                  </p>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {[1, 2, 3].map((cnt) => (
+                        <button
+                            key={cnt}
+                            type="button"
+                            className={`filter-chip ${autoPlayRepeatCount === cnt ? 'active' : ''}`}
+                            style={{ flex: 1, padding: '9px 0', textAlign: 'center', fontWeight: 800 }}
+                            onClick={() => handleUpdateAutoPlayRepeatCount(cnt)}
+                        >
+                          {cnt}회 {cnt === 1 ? '(기본)' : '반복'}
+                        </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ③ 한글 문제 & 정답 음성 읽기 (TTS) */}
+                <div className="settings-section">
+                  <div className="settings-section-title">
+                    <span>🗣️ 한글 문제 & 정답 음성 읽기 (TTS)</span>
+                    <span style={{ color: autoPlayKoreanTts ? '#15803d' : '#64748b', fontWeight: 800 }}>
+                      {autoPlayKoreanTts ? '켜짐' : '꺼짐'}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: '0.76rem', color: '#64748b', margin: '4px 0 8px' }}>
+                    영어 발음과 함께 한국어 뜻도 우리말 음성으로 또박또박 읽어줍니다.
+                  </p>
+                  <button
+                      type="button"
+                      className={`auto-audio-btn ${autoPlayKoreanTts ? 'on' : ''}`}
+                      style={{ width: '100%', justifyContent: 'center', padding: '10px' }}
+                      onClick={handleToggleAutoPlayKoreanTts}
+                  >
+                    <Volume2 size={16} />
+                    {autoPlayKoreanTts ? '✓ 한국어 음성 읽기 켜짐 (터치 시 끄기)' : '한국어 음성 읽기 꺼짐 (터치 시 켜기)'}
+                  </button>
+                </div>
+
+                {/* ④ 답 읽기 완료 시 즉시 이동 안내 */}
+                <div className="settings-section" style={{ background: '#f8fafc', padding: '11px 13px', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: '#334155', fontWeight: 700 }}>
+                    <Zap size={14} color="#eab308" />
+                    답 TTS 읽기 완료 시 다음 문제로 바로 이동
+                  </div>
+                  <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '3px 0 0' }}>
+                    답 발음(첫 번째 문장/단어)이 끝나면 대기 시간 없이 즉시 다음 문제로 넘어갑니다.
+                  </p>
+                </div>
+
+                <div style={{ marginTop: 16 }}>
+                  <button
+                      type="button"
+                      className="submit-btn"
+                      style={{ width: '100%', padding: '12px' }}
+                      onClick={() => setShowAutoPlayOptionsModal(false)}
+                  >
+                    확인 및 닫기
+                  </button>
+                </div>
+              </div>
+            </div>
+        )}
+
         {/* 2. 새로 통합된 '학습 옵션 & 설정' 모달 */}
         {showBottomStats && (
             <div className="gg-modal-backdrop" onClick={() => setShowBottomStats(false)}>
@@ -2072,6 +2377,47 @@ export function App() {
                       <Volume2 size={14} />
                       {autoSpeak ? '자동 읽어주기 켜짐' : '수동 재생'}
                     </button>
+                  </div>
+                </div>
+
+                {/* ② 깜빡이 암기 모드 전용 옵션 */}
+                <div className="settings-section">
+                  <div className="settings-section-title">
+                    <span>⚡ 깜빡이 암기 모드 옵션</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 6 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#334155' }}>
+                        답 발음 반복 횟수
+                      </span>
+                      <div style={{ display: 'inline-flex', gap: 4 }}>
+                        {[1, 2, 3].map((cnt) => (
+                            <button
+                                key={cnt}
+                                type="button"
+                                className={`filter-chip ${autoPlayRepeatCount === cnt ? 'active' : ''}`}
+                                style={{ padding: '5px 10px', fontSize: '0.74rem', fontWeight: 800 }}
+                                onClick={() => handleUpdateAutoPlayRepeatCount(cnt)}
+                            >
+                              {cnt}회 {cnt === 1 ? '(기본)' : '반복'}
+                            </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#334155' }}>
+                        한글 문제 & 정답 음성 읽기 (TTS)
+                      </span>
+                      <button
+                          type="button"
+                          className={`auto-audio-btn ${autoPlayKoreanTts ? 'on' : ''}`}
+                          style={{ padding: '5px 10px', fontSize: '0.74rem' }}
+                          onClick={handleToggleAutoPlayKoreanTts}
+                      >
+                        <Volume2 size={13} />
+                        {autoPlayKoreanTts ? '한국어 켜짐' : '영어만'}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -2579,15 +2925,15 @@ export function App() {
                               <strong>
                                 {isAutoPlayPlaying
                                     ? autoPlayPhase === 'front'
-                                        ? '1단계: 단어 발음 중'
-                                        : '2단계: 뜻 & 예문 전환'
+                                        ? '1단계: 문제 확인 중'
+                                        : `2단계: 정답 확인${autoPlayRepeatCount > 1 ? ` (${autoPlayRepeatCount}회 반복)` : ''}`
                                     : '일시정지 중'}
                               </strong>
                               <span className="autoplay-phase-desc">
                                 {isAutoPlayPlaying
                                     ? autoPlayPhase === 'front'
-                                        ? `${autoPlayInterval}초 후 뜻 화면으로 전환됩니다`
-                                        : '예문 발음 후 다음 단어로 자동 이동합니다'
+                                        ? `${autoPlayInterval}초 후 정답 화면으로 전환됩니다`
+                                        : '답 읽기 완료 시 다음 문제로 바로 이동합니다'
                                     : '재생 버튼 또는 화면을 터치하세요'}
                               </span>
                             </div>
@@ -2601,7 +2947,7 @@ export function App() {
                                 key={`${autoPlayIndex}-${autoPlayPhase}-${isAutoPlayPlaying}`}
                                 className={`autoplay-timer-bar ${isAutoPlayPlaying ? 'animating' : ''}`}
                                 style={{
-                                  animationDuration: `${autoPlayPhase === 'front' ? autoPlayInterval : autoPlayInterval + 0.5}s`,
+                                  animationDuration: `${autoPlayPhase === 'front' ? autoPlayInterval : 1.0}s`,
                                   width: isAutoPlayPlaying ? undefined : autoPlayPhase === 'front' ? '50%' : '100%',
                                 }}
                             />
@@ -2670,7 +3016,7 @@ export function App() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                               <div
                                   className="autoplay-select-wrapper"
-                                  title="재생 대기 시간 선택 (1초~20초)"
+                                  title="문제 노출 시간 선택 (1초~20초)"
                               >
                                 <select
                                     className="autoplay-select-btn"
@@ -2679,7 +3025,7 @@ export function App() {
                                       handleUpdateAutoPlayInterval(Number(e.target.value));
                                     }}
                                     onClick={(e) => e.stopPropagation()}
-                                    aria-label="재생 대기 초 선택"
+                                    aria-label="문제 노출 시간 선택"
                                 >
                                   {AUTO_PLAY_INTERVAL_OPTIONS.map((sec) => (
                                       <option key={sec} value={sec}>
@@ -2689,6 +3035,27 @@ export function App() {
                                 </select>
                                 <ChevronDown size={14} className="autoplay-select-arrow" />
                               </div>
+
+                              <button
+                                  type="button"
+                                  className="autoplay-btn"
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    padding: '7px 10px',
+                                    fontSize: '0.78rem',
+                                    fontWeight: 700,
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowAutoPlayOptionsModal(true);
+                                  }}
+                                  title="깜빡이 옵션 설정 (답 반복 횟수, 한글 음성 읽기 등)"
+                              >
+                                <Settings2 size={14} />
+                                <span>옵션</span>
+                              </button>
 
                               <button
                                   type="button"
