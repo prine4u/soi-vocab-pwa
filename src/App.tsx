@@ -3444,7 +3444,7 @@ export function App() {
                               onClick={() => setIsFlipped(true)}
                               title="정답 확인 (단축키: 스페이스바)"
                           >
-                            <RotateCcw size={18} />
+                            <RotateCcw size={20} />
                             <span>정답 확인하기</span>
                             <span className="dock-key-tag">Space</span>
                           </button>

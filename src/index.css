@@ -199,7 +199,7 @@ body {
     flex-direction: column;
     gap: 12px;
     min-width: 0;
-    padding-bottom: 84px;
+    padding-bottom: 104px;
 }
 
 /* Active Mode / Filter Pill Banner */
@@ -430,21 +430,21 @@ body {
 
 .dock-show-answer-btn {
     width: 100%;
-    min-height: 58px;
-    padding: 14px 20px;
-    border-radius: 18px;
+    min-height: 75px;
+    padding: 18px 24px;
+    border-radius: 20px;
     border: 1.5px solid #eab308;
     background: #FFED00;
     color: #0F172A;
-    font-size: 1.05rem;
+    font-size: 1.15rem;
     font-weight: 800;
     letter-spacing: -0.01em;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    box-shadow: 0 4px 14px rgba(234, 179, 8, 0.25);
+    gap: 10px;
+    box-shadow: 0 4px 16px rgba(234, 179, 8, 0.28);
     transition: transform 0.1s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -457,11 +457,11 @@ body {
 }
 
 .dock-key-tag {
-    font-size: 0.74rem;
+    font-size: 0.78rem;
     font-weight: 800;
     background: rgba(15, 23, 42, 0.12);
     color: #0F172A;
-    padding: 3px 8px;
+    padding: 4px 10px;
     border-radius: 8px;
     margin-left: 6px;
 }
@@ -478,14 +478,14 @@ body {
 }
 
 .rate-btn {
-    min-height: 58px;
-    border-radius: 18px;
-    padding: 8px 6px;
+    min-height: 75px;
+    border-radius: 20px;
+    padding: 10px 6px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 2px;
+    gap: 4px;
     cursor: pointer;
     transition: transform 0.1s ease;
 }
@@ -495,12 +495,12 @@ body {
 }
 
 .rate-label {
-    font-size: 0.92rem;
+    font-size: 1.02rem;
     font-weight: 800;
 }
 
 .rate-interval {
-    font-size: 0.68rem;
+    font-size: 0.72rem;
     opacity: 0.85;
     font-weight: 600;
 }
