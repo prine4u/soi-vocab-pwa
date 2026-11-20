@@ -3065,24 +3065,6 @@ export function App() {
                       </div>
                     </div>
 
-                    {studyMode === 'flashcard' && isFlipped && (
-                        <div className="rating-section">
-                          <div className="rating-grid">
-                            {ratingOptions.map((opt) => (
-                                <button
-                                    key={opt.grade}
-                                    type="button"
-                                    className={`rate-btn ${opt.className}`}
-                                    onClick={() => handleRate(opt.grade)}
-                                >
-                                  <span className="rate-label">{opt.label}</span>
-                                  <span className="rate-interval">{opt.intervalText}</span>
-                                </button>
-                            ))}
-                          </div>
-                        </div>
-                    )}
-
                     {studyMode === 'autoplay' && (
                         <div className="autoplay-controller-card">
                           <div className="autoplay-top-status">
@@ -3381,24 +3363,6 @@ export function App() {
                         )}
                       </div>
                     </div>
-
-                    {spellingResult && (
-                        <div className="rating-section">
-                          <div className="rating-grid">
-                            {ratingOptions.map((opt) => (
-                                <button
-                                    key={opt.grade}
-                                    type="button"
-                                    className={`rate-btn ${opt.className}`}
-                                    onClick={() => handleRate(opt.grade)}
-                                >
-                                  <span className="rate-label">{opt.label}</span>
-                                  <span className="rate-interval">{opt.intervalText}</span>
-                                </button>
-                            ))}
-                          </div>
-                        </div>
-                    )}
                   </>
               )}
 
@@ -3468,6 +3432,40 @@ export function App() {
                   )}
                 </div>
               </div>
+
+              {/* 화면 최하단 고정 학습 액션 바 (Anki Mobile 스타일 - 위치 완벽 고정) */}
+              {studyMode !== 'autoplay' && currentItem && (
+                  <div className="study-fixed-dock">
+                    <div className="study-fixed-dock-inner">
+                      {studyMode === 'flashcard' && !isFlipped ? (
+                          <button
+                              type="button"
+                              className="dock-show-answer-btn"
+                              onClick={() => setIsFlipped(true)}
+                              title="정답 확인 (단축키: 스페이스바)"
+                          >
+                            <RotateCcw size={16} />
+                            <span>정답 확인하기</span>
+                            <span className="dock-key-tag">Space</span>
+                          </button>
+                      ) : (studyMode === 'flashcard' && isFlipped) || (studyMode === 'spelling' && spellingResult) ? (
+                          <div className="rating-grid">
+                            {ratingOptions.map((opt) => (
+                                <button
+                                    key={opt.grade}
+                                    type="button"
+                                    className={`rate-btn ${opt.className}`}
+                                    onClick={() => handleRate(opt.grade)}
+                                >
+                                  <span className="rate-label">{opt.label}</span>
+                                  <span className="rate-interval">{opt.intervalText}</span>
+                                </button>
+                            ))}
+                          </div>
+                      ) : null}
+                    </div>
+                  </div>
+              )}
             </div>
         )}
 
