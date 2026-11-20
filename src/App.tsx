@@ -174,6 +174,16 @@ const FLASHCARD_DIR_STORAGE_KEY = 'soi_vocab_flashcard_dir_v1';
 const AUTOPLAY_INTERVAL_STORAGE_KEY = 'soi_vocab_autoplay_interval_v1';
 const AUTOPLAY_REPEAT_STORAGE_KEY = 'soi_vocab_autoplay_repeat_v1';
 const AUTOPLAY_KOREAN_TTS_STORAGE_KEY = 'soi_vocab_autoplay_korean_tts_v1';
+const STUDY_CATEGORY_STORAGE_KEY = 'soi_vocab_study_category_v1';
+const LIST_CATEGORY_STORAGE_KEY = 'soi_vocab_list_category_v1';
+const TARGET_CATEGORY_STORAGE_KEY = 'soi_vocab_target_category_v1';
+const STUDY_MODE_STORAGE_KEY = 'soi_vocab_study_mode_v1';
+const STUDY_FILTER_STORAGE_KEY = 'soi_vocab_study_filter_v1';
+const COLLAPSED_FOLDERS_STORAGE_KEY = 'soi_vocab_collapsed_folders_v1';
+const AUTOPLAY_INDEX_STORAGE_KEY = 'soi_vocab_autoplay_index_v1';
+const AUTOPLAY_FOLDER_STORAGE_KEY = 'soi_vocab_autoplay_folder_v1';
+const CRAM_MODE_STORAGE_KEY = 'soi_vocab_cram_mode_v1';
+const CRAM_QUEUE_STORAGE_KEY = 'soi_vocab_cram_queue_v1';
 const AUTO_PLAY_INTERVAL_OPTIONS = [
   1, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
 ];
@@ -252,7 +262,10 @@ export function App() {
   );
   const [stats, setStats] = useState<StudyStats>(() => loadStudyStats());
   const [activeTab, setActiveTab] = useState<AppTab>('study');
-  const [studyMode, setStudyMode] = useState<StudyMode>('flashcard');
+  const [studyMode, setStudyMode] = useState<StudyMode>(() => {
+    const saved = localStorage.getItem(STUDY_MODE_STORAGE_KEY) as StudyMode | null;
+    return saved === 'flashcard' || saved === 'spelling' || saved === 'autoplay' ? saved : 'flashcard';
+  });
   const [flashcardDirection, setFlashcardDirection] = useState<FlashcardDirection>(() => {
     const saved = localStorage.getItem(FLASHCARD_DIR_STORAGE_KEY);
     return saved === 'ko-en' || saved === 'random' ? saved : 'en-ko';
@@ -260,7 +273,10 @@ export function App() {
   const [randomSide, setRandomSide] = useState<'en-ko' | 'ko-en'>(() =>
     Math.random() < 0.5 ? 'en-ko' : 'ko-en'
   );
-  const [studyFilter, setStudyFilter] = useState<StudyFilter>('all');
+  const [studyFilter, setStudyFilter] = useState<StudyFilter>(() => {
+    const saved = localStorage.getItem(STUDY_FILTER_STORAGE_KEY) as StudyFilter | null;
+    return saved === 'all' || saved === 'starred' || saved === 'weak' ? saved : 'all';
+  });
   const [autoSpeak, setAutoSpeak] = useState<boolean>(true);
   const [speechRate, setSpeechRate] = useState<number>(() => {
     const saved = Number(localStorage.getItem(SPEECH_RATE_STORAGE_KEY));
@@ -271,22 +287,49 @@ export function App() {
   const cloudPushTimerRef = useRef<number | null>(null);
 
   // 안키 보조 기능: 자유 복습(벼락치기) 모드 및 실행 취소(Undo) 스택
-  const [isCramMode, setIsCramMode] = useState<boolean>(false);
-  const [cramQueueIds, setCramQueueIds] = useState<string[]>([]);
+  const [isCramMode, setIsCramMode] = useState<boolean>(() => {
+    return localStorage.getItem(CRAM_MODE_STORAGE_KEY) === 'true';
+  });
+  const [cramQueueIds, setCramQueueIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(CRAM_QUEUE_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
 
   const [showBottomStats, setShowBottomStats] = useState<boolean>(false);
   const [showFsrsModal, setShowFsrsModal] = useState<boolean>(false);  
   
-  const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
+  const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(COLLAPSED_FOLDERS_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
 
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(
       null
   );
 
-  const [studyCategory, setStudyCategory] = useState<string>('ALL');
-  const [listCategory, setListCategory] = useState<string>('ALL');
-  const [targetCategory, setTargetCategory] = useState<string>('Vocabulary Engine');
+  const [studyCategory, setStudyCategory] = useState<string>(() => {
+    const saved = localStorage.getItem(STUDY_CATEGORY_STORAGE_KEY);
+    return saved ? saved : 'ALL';
+  });
+  const [listCategory, setListCategory] = useState<string>(() => {
+    const saved = localStorage.getItem(LIST_CATEGORY_STORAGE_KEY);
+    return saved ? saved : 'ALL';
+  });
+  const [targetCategory, setTargetCategory] = useState<string>(() => {
+    const saved = localStorage.getItem(TARGET_CATEGORY_STORAGE_KEY);
+    if (saved) return saved;
+    const savedStudy = localStorage.getItem(STUDY_CATEGORY_STORAGE_KEY);
+    return savedStudy && savedStudy !== 'ALL' ? savedStudy : 'Vocabulary Engine';
+  });
   const [showGgModal, setShowGgModal] = useState<boolean>(false);
   const [showFolderGuideModal, setShowFolderGuideModal] = useState<boolean>(false);
   const [newParentFolder, setNewParentFolder] = useState<string>('');
@@ -299,8 +342,8 @@ export function App() {
   const cardStartTimeRef = useRef<number>(Date.now());
   const spellingInputRef = useRef<HTMLInputElement | null>(null);
 
-  // 자동 재생 (깜빡이 암기 모드) 상태
-  const [isAutoPlayPlaying, setIsAutoPlayPlaying] = useState<boolean>(true);
+  // 자동 재생 (깜빡이 암기 모드) 상태 - 앱 실행 시에는 자동 음성 재생 방지를 위해 정지 상태로 시작
+  const [isAutoPlayPlaying, setIsAutoPlayPlaying] = useState<boolean>(false);
   const [autoPlayInterval, setAutoPlayInterval] = useState<number>(() => {
     const saved = Number(localStorage.getItem(AUTOPLAY_INTERVAL_STORAGE_KEY));
     return AUTO_PLAY_INTERVAL_OPTIONS.includes(saved) ? saved : 2;
@@ -314,7 +357,15 @@ export function App() {
     return saved !== null ? saved === 'true' : true;
   });
   const [showAutoPlayOptionsModal, setShowAutoPlayOptionsModal] = useState<boolean>(false);
-  const [autoPlayIndex, setAutoPlayIndex] = useState<number>(0);
+  const [autoPlayIndex, setAutoPlayIndex] = useState<number>(() => {
+    const savedFolder = localStorage.getItem(AUTOPLAY_FOLDER_STORAGE_KEY);
+    const savedStudy = localStorage.getItem(STUDY_CATEGORY_STORAGE_KEY) || 'ALL';
+    const savedIdx = Number(localStorage.getItem(AUTOPLAY_INDEX_STORAGE_KEY));
+    if (savedFolder === savedStudy && Number.isFinite(savedIdx) && savedIdx >= 0) {
+      return savedIdx;
+    }
+    return 0;
+  });
   const [isAutoPlayLoop, setIsAutoPlayLoop] = useState<boolean>(true);
   const [autoPlayPhase, setAutoPlayPhase] = useState<'front' | 'back'>('front');
   const autoPlayTimerRef = useRef<number | null>(null);
@@ -394,6 +445,54 @@ export function App() {
   useEffect(() => {
     localStorage.setItem(FLASHCARD_DIR_STORAGE_KEY, flashcardDirection);
   }, [flashcardDirection]);
+
+  useEffect(() => {
+    localStorage.setItem(STUDY_CATEGORY_STORAGE_KEY, studyCategory);
+  }, [studyCategory]);
+
+  useEffect(() => {
+    localStorage.setItem(LIST_CATEGORY_STORAGE_KEY, listCategory);
+  }, [listCategory]);
+
+  useEffect(() => {
+    localStorage.setItem(TARGET_CATEGORY_STORAGE_KEY, targetCategory);
+  }, [targetCategory]);
+
+  useEffect(() => {
+    localStorage.setItem(STUDY_MODE_STORAGE_KEY, studyMode);
+  }, [studyMode]);
+
+  useEffect(() => {
+    localStorage.setItem(STUDY_FILTER_STORAGE_KEY, studyFilter);
+  }, [studyFilter]);
+
+  useEffect(() => {
+    localStorage.setItem(CRAM_MODE_STORAGE_KEY, String(isCramMode));
+    localStorage.setItem(CRAM_QUEUE_STORAGE_KEY, JSON.stringify(cramQueueIds));
+  }, [isCramMode, cramQueueIds]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(COLLAPSED_FOLDERS_STORAGE_KEY, JSON.stringify(collapsedParents));
+    } catch {}
+  }, [collapsedParents]);
+
+  useEffect(() => {
+    localStorage.setItem(AUTOPLAY_INDEX_STORAGE_KEY, String(autoPlayIndex));
+    localStorage.setItem(AUTOPLAY_FOLDER_STORAGE_KEY, studyCategory);
+  }, [autoPlayIndex, studyCategory]);
+
+  // 안전 폴백: 저장된 폴더가 완전히 삭제된 경우 'ALL'로 안전하게 복귀
+  useEffect(() => {
+    if (items.length > 0 && studyCategory !== 'ALL') {
+      const exists =
+        items.some((it) => isCategoryMatch(it.tag, studyCategory)) ||
+        customCategories.some((cat) => isCategoryMatch(cat, studyCategory));
+      if (!exists) {
+        setStudyCategory('ALL');
+      }
+    }
+  }, [items, customCategories, studyCategory]);
 
   useEffect(() => {
     if ('speechSynthesis' in window) {
@@ -1254,6 +1353,7 @@ export function App() {
                   setStudyCategory(node.fullPath);
                   setTargetCategory(node.fullPath);
                   setIsCramMode(false);
+                  setAutoPlayIndex(0);
                   resetCardInteraction();
                   setShowGgModal(false);
                 } else {
@@ -1975,9 +2075,37 @@ export function App() {
               <span className="due-pill" title="오늘 남은 복습 단어">
               {isCramMode ? `벼락치기 ${dueItems.length}` : `남은 복습 ${dueItems.length}`}
             </span>
-              <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>
-              · 전체 {items.length}단어
-            </span>
+              <button
+                type="button"
+                className="header-folder-pill"
+                onClick={() => setShowGgModal(true)}
+                title={`현재 학습 폴더: ${studyCategory === 'ALL' ? '전체 단어장' : studyCategory} (클릭 시 변경)`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  background: studyCategory === 'ALL' ? '#f1f5f9' : '#fef9c3',
+                  color: studyCategory === 'ALL' ? '#475569' : '#854d0e',
+                  border: studyCategory === 'ALL' ? '1px solid #cbd5e1' : '1px solid #facc15',
+                  borderRadius: 9999,
+                  padding: '2px 8px',
+                  fontSize: '0.73rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  maxWidth: 160,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <FolderOpen size={11} />
+                <span>
+                  {studyCategory === 'ALL' ? '전체' : studyCategory.split('/').pop()}
+                </span>
+                <span style={{ opacity: 0.8, fontSize: '0.68rem', fontWeight: 600 }}>
+                  ({selectedPoolItems.length})
+                </span>
+              </button>
             </div>
           </div>
 
@@ -2173,6 +2301,7 @@ export function App() {
                           onClick={() => {
                             setStudyCategory('ALL');
                             setIsCramMode(false);
+                            setAutoPlayIndex(0);
                             resetCardInteraction();
                             setShowGgModal(false);
                           }}
