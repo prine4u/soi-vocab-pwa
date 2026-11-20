@@ -199,7 +199,7 @@ body {
     flex-direction: column;
     gap: 12px;
     min-width: 0;
-    padding-bottom: 76px;
+    padding-bottom: 84px;
 }
 
 /* Active Mode / Filter Pill Banner */
@@ -430,20 +430,22 @@ body {
 
 .dock-show-answer-btn {
     width: 100%;
-    padding: 13px 18px;
-    border-radius: 16px;
+    min-height: 58px;
+    padding: 14px 20px;
+    border-radius: 18px;
     border: 1.5px solid #eab308;
     background: #FFED00;
     color: #0F172A;
-    font-size: 0.98rem;
+    font-size: 1.05rem;
     font-weight: 800;
+    letter-spacing: -0.01em;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    box-shadow: 0 4px 14px rgba(234, 179, 8, 0.22);
-    transition: transform 0.1s ease, background 0.15s ease;
+    box-shadow: 0 4px 14px rgba(234, 179, 8, 0.25);
+    transition: transform 0.1s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
 .dock-show-answer-btn:hover {
@@ -455,13 +457,13 @@ body {
 }
 
 .dock-key-tag {
-    font-size: 0.72rem;
-    font-weight: 700;
-    background: rgba(15, 23, 42, 0.1);
+    font-size: 0.74rem;
+    font-weight: 800;
+    background: rgba(15, 23, 42, 0.12);
     color: #0F172A;
-    padding: 2px 7px;
-    border-radius: 6px;
-    margin-left: 4px;
+    padding: 3px 8px;
+    border-radius: 8px;
+    margin-left: 6px;
 }
 
 .rating-section {
@@ -476,12 +478,14 @@ body {
 }
 
 .rate-btn {
-    border-radius: 16px;
-    padding: 12px 6px;
+    min-height: 58px;
+    border-radius: 18px;
+    padding: 8px 6px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 3px;
+    justify-content: center;
+    gap: 2px;
     cursor: pointer;
     transition: transform 0.1s ease;
 }
@@ -491,7 +495,7 @@ body {
 }
 
 .rate-label {
-    font-size: 0.88rem;
+    font-size: 0.92rem;
     font-weight: 800;
 }
 
