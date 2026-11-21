@@ -9,18 +9,22 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['icon-192.png', 'icon-512.png'],
+      includeAssets: ['icon.svg', 'favicon.svg'],
       manifest: {
-        name: '소이 스마트 영단어',
-        short_name: '소이 영단어',
-        description: 'FSRS 망각곡선 기반 초등 영단어 학습 앱',
-        theme_color: '#4f46e5',
-        background_color: '#f8fafc',
+        name: '소이의 단어 암기장 - AI 영단어장',
+        short_name: '소이 단어장',
+        description: 'FSRS 망각곡선 기반 AI 영어 단어 암기장',
+        theme_color: '#FFED00',
+        background_color: '#FAF9F5',
         display: 'standalone',
         orientation: 'portrait',
         icons: [
-          { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: 'icon-512.png', sizes: '512x512', type: 'image/png' }
+          {
+            src: '/icon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
+            purpose: 'any maskable'
+          }
         ]
       }
     })
