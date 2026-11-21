@@ -193,13 +193,35 @@ const AUTO_PLAY_INTERVAL_OPTIONS = [
 function formatInterval(due: Date, now: Date): string {
   const diffMs = Math.max(0, due.getTime() - now.getTime());
   const diffMin = Math.round(diffMs / 60000);
-  if (diffMin < 1) return '오늘 재복습';
+  if (diffMin <= 1) return '1분 뒤';
   if (diffMin < 60) return `${diffMin}분 뒤`;
   const diffHours = Math.round(diffMin / 60);
   if (diffHours < 24) return `${diffHours}시간 뒤`;
   const diffDays = Math.round(diffHours / 24);
   if (diffDays < 30) return `${diffDays}일 뒤`;
   return `${Math.round(diffDays / 30)}개월 뒤`;
+}
+
+const DAILY_GOAL_STORAGE_KEY = 'soi_vocab_daily_goal';
+const DAILY_NEW_LIMIT_STORAGE_KEY = 'soi_vocab_daily_new_limit';
+const DAILY_NEW_STUDIED_KEY = 'soi_vocab_daily_new_studied';
+
+function loadTodayNewStudiedCount(): number {
+  const today = getDateKey();
+  const raw = localStorage.getItem(DAILY_NEW_STUDIED_KEY);
+  if (!raw) return 0;
+  try {
+    const data = JSON.parse(raw);
+    if (data.date === today && typeof data.count === 'number') {
+      return data.count;
+    }
+  } catch {}
+  return 0;
+}
+
+function saveTodayNewStudiedCount(count: number): void {
+  const today = getDateKey();
+  localStorage.setItem(DAILY_NEW_STUDIED_KEY, JSON.stringify({ date: today, count }));
 }
 
 function getStateLabel(state: State): string {
@@ -394,6 +416,38 @@ export function App() {
       showToast(next ? '한글 음성 읽기(TTS) 켜짐' : '한글 음성 읽기(TTS) 꺼짐 (영어만)');
       return next;
     });
+  };
+
+  const [dailyGoal, setDailyGoal] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(DAILY_GOAL_STORAGE_KEY));
+    return [20, 30, 50, 100].includes(saved) ? saved : 30;
+  });
+
+  const [dailyNewLimit, setDailyNewLimit] = useState<number>(() => {
+    const raw = localStorage.getItem(DAILY_NEW_LIMIT_STORAGE_KEY);
+    if (raw === null) return 20;
+    const saved = Number(raw);
+    return [0, 10, 20, 30, 50].includes(saved) ? saved : 20;
+  });
+
+  const [todayNewStudiedCount, setTodayNewStudiedCount] = useState<number>(() => {
+    return loadTodayNewStudiedCount();
+  });
+
+  const handleUpdateDailyGoal = (goal: number) => {
+    setDailyGoal(goal);
+    localStorage.setItem(DAILY_GOAL_STORAGE_KEY, String(goal));
+    showToast(`🎯 일일 복습 목표: ${goal}개로 설정되었습니다.`);
+  };
+
+  const handleUpdateDailyNewLimit = (limit: number) => {
+    setDailyNewLimit(limit);
+    localStorage.setItem(DAILY_NEW_LIMIT_STORAGE_KEY, String(limit));
+    showToast(
+      limit === 0
+        ? '⚡ 하루 새 단어 제한 해제 (전체 새 단어 학습)'
+        : `⚡ 하루 새 단어 제한: ${limit}개로 설정되었습니다.`
+    );
   };
 
   const [addSubTab, setAddSubTab] = useState<'camera' | 'single' | 'excel'>('camera');
@@ -619,6 +673,11 @@ export function App() {
     return { totalTries, avgSec };
   }, [selectedPoolItems]);
 
+  const totalDueInPool = useMemo(() => {
+    const endOfToday = new Date().setHours(23, 59, 59, 999);
+    return filteredPoolItems.filter((item) => item.card.due.getTime() <= endOfToday).length;
+  }, [filteredPoolItems]);
+
   // 일반 FSRS 복습 대기열 vs 자유 복습(벼락치기) 대기열
   const dueItems = useMemo(() => {
     if (isCramMode) {
@@ -629,9 +688,32 @@ export function App() {
     }
 
     const endOfToday = new Date().setHours(23, 59, 59, 999);
-    const list = filteredPoolItems.filter((item) => item.card.due.getTime() <= endOfToday);
 
-    return [...list].sort((a, b) => {
+    // 1. 기존 복습 대기 단어 (Learning, Review, Relearning)
+    const reviewDueList = filteredPoolItems.filter(
+      (item) => item.card.state !== State.New && item.card.due.getTime() <= endOfToday
+    );
+
+    // 2. 새 단어 (State.New)
+    const newCandidateList = filteredPoolItems.filter(
+      (item) => item.card.state === State.New
+    );
+
+    // 오늘 배울 수 있는 남은 새 단어 할당량
+    const remainingNewQuota = dailyNewLimit === 0
+      ? newCandidateList.length
+      : Math.max(0, dailyNewLimit - todayNewStudiedCount);
+
+    const allowedNewList = newCandidateList.slice(0, remainingNewQuota);
+    const combined = [...reviewDueList, ...allowedNewList];
+
+    return combined.sort((a, b) => {
+      // 복습 단어를 새 단어보다 먼저 배치
+      const aIsNew = a.card.state === State.New ? 1 : 0;
+      const bIsNew = b.card.state === State.New ? 1 : 0;
+      if (aIsNew !== bIsNew) {
+        return aIsNew - bIsNew;
+      }
       const aLast = a.itemStats?.lastSolvedAt || 0;
       const bLast = b.itemStats?.lastSolvedAt || 0;
       if (aLast !== bLast) {
@@ -639,7 +721,7 @@ export function App() {
       }
       return a.card.due.getTime() - b.card.due.getTime();
     });
-  }, [filteredPoolItems, isCramMode, cramQueueIds]);
+  }, [filteredPoolItems, isCramMode, cramQueueIds, dailyNewLimit, todayNewStudiedCount]);
 
   const autoPlayPool = useMemo(() => {
     if (isCramMode && cramQueueIds.length > 0) {
@@ -1168,6 +1250,16 @@ export function App() {
     setStats(lastSnap.stats);
     setIsCramMode(lastSnap.isCramMode);
     setCramQueueIds(lastSnap.cramQueueIds);
+    if (lastSnap.wordLabel) {
+      const target = items.find((it) => it.word === lastSnap.wordLabel);
+      if (target && target.card.state === State.New) {
+        setTodayNewStudiedCount((prev) => {
+          const next = Math.max(0, prev - 1);
+          saveTodayNewStudiedCount(next);
+          return next;
+        });
+      }
+    }
     resetCardInteraction();
     scheduleCloudPush(lastSnap.items, allCategories, lastSnap.stats);
     showToast(`↩️ "${lastSnap.wordLabel}" 카드로 되돌렸습니다.`);
@@ -1574,6 +1666,13 @@ export function App() {
     });
 
     const nextStats = recordAnswerStats(stats, isEasyOrGood);
+    if (currentItem.card.state === State.New) {
+      setTodayNewStudiedCount((prev) => {
+        const next = prev + 1;
+        saveTodayNewStudiedCount(next);
+        return next;
+      });
+    }
     setItems(nextItems);
     setStats(nextStats);
     scheduleCloudPush(nextItems, allCategories, nextStats);
@@ -2066,13 +2165,17 @@ export function App() {
           grade: Rating.Again,
           label: '다시 (1)',
           className: 'rate-again',
-          intervalText: isCramMode ? '세션 끝 재복습' : '오늘 끝부분 재복습',
+          intervalText: isCramMode
+              ? '1분 뒤 (세션 끝)'
+              : formatInterval(scheduling[Rating.Again].card.due, now),
         },
         {
           grade: Rating.Hard,
           label: '어려움 (2)',
           className: 'rate-hard',
-          intervalText: isCramMode ? '세션 끝 재복습' : '오늘 끝부분 재복습',
+          intervalText: isCramMode
+              ? '5분 뒤 (세션 끝)'
+              : formatInterval(scheduling[Rating.Hard].card.due, now),
         },
         {
           grade: Rating.Good,
@@ -2116,13 +2219,34 @@ export function App() {
               </button>
             </div>
             <div className="header-meta-row">
-            <span className="streak-pill" title="연속 학습 일수">
-              <Flame size={12} />
-              {stats.streak}일째
-            </span>
-              <span className="due-pill" title="오늘 남은 복습 단어">
-              {isCramMode ? `벼락치기 ${dueItems.length}` : `남은 복습 ${dueItems.length}`}
-            </span>
+              <span className="streak-pill" title={`연속 학습 ${stats.streak}일째`}>
+                <Flame size={12} />
+                {stats.streak}일째
+              </span>
+
+              {isCramMode ? (
+                <span className="due-pill" title="자유 복습(벼락치기) 대기 단어">
+                  벼락치기 {dueItems.length}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className={`daily-goal-pill ${stats.todayReviewed >= dailyGoal ? 'goal-achieved' : ''}`}
+                  onClick={() => setShowBottomStats(true)}
+                  title={`오늘 완료: ${stats.todayReviewed}회 / 목표: ${dailyGoal}회 (전체 대기: ${totalDueInPool}개) - 클릭 시 목표 변경`}
+                >
+                  <span>{stats.todayReviewed >= dailyGoal ? '🏆' : '🎯'}</span>
+                  <span>
+                    오늘 <strong>{stats.todayReviewed}</strong>/{dailyGoal}
+                  </span>
+                  {totalDueInPool > 0 && (
+                    <span className="goal-aux-pending" title={`전체 대기 단어: ${totalDueInPool}개`}>
+                      (대기 {totalDueInPool})
+                    </span>
+                  )}
+                </button>
+              )}
+
               <button
                 type="button"
                 className="header-folder-pill"
@@ -2155,6 +2279,22 @@ export function App() {
                 </span>
               </button>
             </div>
+
+            {/* 오늘의 목표 달성률 얇은 진행률 바 (Thin Progress Bar) */}
+            {!isCramMode && (
+              <div
+                className="daily-progress-wrap"
+                onClick={() => setShowBottomStats(true)}
+                title={`오늘 학습 목표 달성률: ${Math.min(100, Math.round((stats.todayReviewed / dailyGoal) * 100))}% (${stats.todayReviewed}/${dailyGoal} 완료)`}
+              >
+                <div
+                  className={`daily-progress-bar ${stats.todayReviewed >= dailyGoal ? 'achieved' : ''}`}
+                  style={{
+                    width: `${Math.min(100, Math.max(0, (stats.todayReviewed / dailyGoal) * 100))}%`,
+                  }}
+                />
+              </div>
+            )}
           </div>
 
           <div className="header-actions">
@@ -2554,6 +2694,69 @@ export function App() {
                   </button>
                 </div>
 
+                {/* 🎯 오늘의 학습 목표 & 하루 새 단어 제한 설정 */}
+                <div className="settings-section">
+                  <div className="settings-section-title">
+                    <span>🎯 오늘의 학습 목표 & 새 단어 제한</span>
+                    <span style={{ color: '#854d0e', fontWeight: 800 }}>
+                      목표 {dailyGoal}개 · 새 단어 {dailyNewLimit === 0 ? '제한 없음' : `${dailyNewLimit}개/일`}
+                    </span>
+                  </div>
+
+                  {/* ① 일일 복습 목표 */}
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#334155' }}>
+                        일일 복습 목표 (상단 진행률 바 기준)
+                      </span>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#0f172a' }}>
+                        현재 {dailyGoal}개
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {[20, 30, 50, 100].map((goal) => (
+                        <button
+                          key={goal}
+                          type="button"
+                          className={`filter-chip ${dailyGoal === goal ? 'active' : ''}`}
+                          style={{ flex: 1, padding: '7px 0', textAlign: 'center', fontWeight: 800 }}
+                          onClick={() => handleUpdateDailyGoal(goal)}
+                        >
+                          {goal}개
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* ② 하루 새 단어 제한 */}
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#334155' }}>
+                        하루 새 단어 제한 (New Cards Limit)
+                      </span>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#0f172a' }}>
+                        {dailyNewLimit === 0 ? '제한 없음' : `${dailyNewLimit}개/일`}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.74rem', color: '#64748b', margin: '2px 0 6px' }}>
+                      하루에 무리하지 않도록 처음 보는 새 단어의 출제 수를 조절합니다. (오늘 학습한 새 단어: <strong>{todayNewStudiedCount}개</strong>)
+                    </p>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {[10, 20, 30, 50, 0].map((limit) => (
+                        <button
+                          key={limit}
+                          type="button"
+                          className={`filter-chip ${dailyNewLimit === limit ? 'active' : ''}`}
+                          style={{ flex: 1, padding: '7px 0', textAlign: 'center', fontWeight: 800 }}
+                          onClick={() => handleUpdateDailyNewLimit(limit)}
+                        >
+                          {limit === 0 ? '제한 없음' : `${limit}개`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
                 {/* ① 발음 속도 및 자동 재생 */}
                 <div className="settings-section">
                   <div className="settings-section-title">
@@ -2717,8 +2920,11 @@ export function App() {
                   </div>
                   <div style={{ fontSize: '0.82rem', color: '#334155', lineHeight: 1.6 }}>
                     <div>
-                      • 오늘 완료한 복습: <strong>{stats.todayReviewed}회</strong> (연속{' '}
+                      • 오늘 완료한 복습: <strong>{stats.todayReviewed}회</strong> / 목표 {dailyGoal}회 (연속{' '}
                       <strong>{stats.streak}일째</strong> 학습 중)
+                    </div>
+                    <div>
+                      • 오늘 학습한 새 단어: <strong>{todayNewStudiedCount}개</strong> (일일 제한: {dailyNewLimit === 0 ? '제한 없음' : `${dailyNewLimit}개`}) · 전체 대기: <strong>{totalDueInPool}개</strong>
                     </div>
                     <div>
                       • 선택 폴더 평균 풀이 시간: <strong>{selectionMetrics.avgSec}초</strong> (누적{' '}
@@ -2846,13 +3052,54 @@ export function App() {
                       <Sparkles size={26} />
                     </div>
                     <h2 style={{ margin: '0 0 6px', fontSize: '1.2rem', fontWeight: 800 }}>
-                      [{studyCategory === 'ALL' ? '전체 단어장' : studyCategory}]{' '}
-                      {isCramMode ? '자유 복습 완료!' : '오늘 복습 완료!'}
+                      [{studyCategory === 'ALL' ? '전체 단어장' : studyCategory.split('/').pop()}]{' '}
+                      {isCramMode
+                          ? '자유 복습 완료!'
+                          : stats.todayReviewed >= dailyGoal
+                          ? '오늘의 학습 목표 달성! 🎉'
+                          : '오늘 할당된 단어 복습 완료!'}
                     </h2>
-                    <p style={{ color: '#64748b', fontSize: '0.88rem', marginBottom: 20 }}>
-                      오늘 총 <strong>{stats.todayReviewed}회</strong> 복습을 마쳤습니다.
+                    <p style={{ color: '#64748b', fontSize: '0.88rem', marginBottom: 16 }}>
+                      오늘 총 <strong>{stats.todayReviewed}회</strong> 복습 완료 (일일 목표: {dailyGoal}회
+                      {todayNewStudiedCount > 0 ? ` · 오늘 새 단어: ${todayNewStudiedCount}개` : ''})
                     </p>
+                    {totalDueInPool > 0 && dailyNewLimit > 0 && (
+                      <div style={{
+                        background: '#fefce8',
+                        border: '1px solid #fef08a',
+                        borderRadius: 14,
+                        padding: '10px 14px',
+                        marginBottom: 16,
+                        fontSize: '0.82rem',
+                        color: '#854d0e',
+                        textAlign: 'center',
+                        lineHeight: 1.5,
+                      }}>
+                        💡 오늘 할당된 새 단어({dailyNewLimit}개) 학습을 마쳤습니다. 대기 중인 단어가 <strong>{totalDueInPool}개</strong> 더 있습니다.
+                      </div>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      {totalDueInPool > 0 && dailyNewLimit > 0 && (
+                        <button
+                          type="button"
+                          className="submit-btn"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 5,
+                            padding: '10px 16px',
+                            background: '#eab308',
+                            color: '#0f172a',
+                          }}
+                          onClick={() => {
+                            setDailyNewLimit((prev) => prev + 10);
+                            showToast('⚡ 새 단어 10개가 오늘 대기열에 추가되었습니다!');
+                          }}
+                        >
+                          <Plus size={15} />
+                          새 단어 10개 더 공부하기
+                        </button>
+                      )}
                       {filteredPoolItems.length > 0 && (
                           <>
                             <button
