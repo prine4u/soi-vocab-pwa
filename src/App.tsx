@@ -53,6 +53,7 @@ import {
   SkipBack,
   SkipForward,
   Repeat,
+  Puzzle,
 } from 'lucide-react';
 import type {
   VocabItem,
@@ -82,6 +83,7 @@ import {
   cleanKoreanForTts,
   expandMeaningAbbreviations,
   getSpellingPromptMeaning,
+  generateClozeData,
   loadLocalUpdatedAt,
   saveLocalUpdatedAt,
 } from './utils/storage';
@@ -338,9 +340,12 @@ export function App() {
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
   const [typedAnswer, setTypedAnswer] = useState<string>('');
   const [spellingResult, setSpellingResult] = useState<'correct' | 'wrong' | null>(null);
+  const [clozeInput, setClozeInput] = useState<string>('');
+  const [clozeResult, setClozeResult] = useState<'correct' | 'wrong' | null>(null);
   const [showHint, setShowHint] = useState<boolean>(false);
   const cardStartTimeRef = useRef<number>(Date.now());
   const spellingInputRef = useRef<HTMLInputElement | null>(null);
+  const clozeInputRef = useRef<HTMLInputElement | null>(null);
 
   // 자동 재생 (깜빡이 암기 모드) 상태 - 앱 실행 시에는 자동 음성 재생 방지를 위해 정지 상태로 시작
   const [isAutoPlayPlaying, setIsAutoPlayPlaying] = useState<boolean>(false);
@@ -661,6 +666,11 @@ export function App() {
     flashcardDirection === 'random' ? randomSide : flashcardDirection;
   const isKoToEn = effectiveDirection === 'ko-en';
 
+  const currentClozeData = useMemo(() => {
+    if (!currentItem) return null;
+    return generateClozeData(currentItem.word, currentItem.meaning, currentItem.example);
+  }, [currentItem?.id, currentItem?.word, currentItem?.meaning, currentItem?.example]);
+
   useEffect(() => {
     cardStartTimeRef.current = Date.now();
   }, [currentItem?.id, studyCategory]);
@@ -865,10 +875,18 @@ export function App() {
     }
   }, [activeTab, studyMode, currentItem?.id, spellingResult]);
 
+  useEffect(() => {
+    if (activeTab === 'study' && studyMode === 'cloze' && currentItem && !isFlipped) {
+      clozeInputRef.current?.focus();
+    }
+  }, [activeTab, studyMode, currentItem?.id, isFlipped]);
+
   const resetCardInteraction = () => {
     setIsFlipped(false);
     setTypedAnswer('');
     setSpellingResult(null);
+    setClozeInput('');
+    setClozeResult(null);
     setShowHint(false);
     setAutoPlayPhase('front');
     setRandomSide(Math.random() < 0.5 ? 'en-ko' : 'ko-en');
@@ -1481,7 +1499,8 @@ export function App() {
     const elapsedMs = Math.min(120000, Math.max(500, Date.now() - cardStartTimeRef.current));
     const isEasyOrGood =
         (grade === Rating.Good || grade === Rating.Easy) &&
-        (studyMode !== 'spelling' || spellingResult === 'correct');
+        (studyMode !== 'spelling' || spellingResult === 'correct') &&
+        (studyMode !== 'cloze' || clozeResult !== 'wrong');
 
     // 자유 복습(벼락치기) 모드일 때: FSRS card.due 일정을 변경하지 않고 큐만 이동
     if (isCramMode) {
@@ -1608,16 +1627,20 @@ export function App() {
         }
       }
 
-      // Space: 플래시카드 뒤집기
-      if (e.code === 'Space' && studyMode === 'flashcard' && !isFlipped) {
+      // Space: 플래시카드 뒤집기 및 예문 빈칸 정답 확인
+      if (e.code === 'Space' && (studyMode === 'flashcard' || studyMode === 'cloze') && !isFlipped) {
         e.preventDefault();
         setIsFlipped(true);
+        if (studyMode === 'cloze') {
+          speakExampleOrWord(currentItem, speechRate);
+        }
         return;
       }
 
-      // 1, 2, 3, 4: 카드 평가 (뒷면이거나 스펠링 채점 완료 상태일 때)
+      // 1, 2, 3, 4: 카드 평가 (뒷면이거나 채점 완료 상태일 때)
       const canRate =
           (studyMode === 'flashcard' && isFlipped) ||
+          (studyMode === 'cloze' && (isFlipped || clozeResult !== null)) ||
           (studyMode === 'spelling' && spellingResult !== null);
 
       if (canRate) {
@@ -1646,7 +1669,9 @@ export function App() {
       // R: 발음/예문 다시 듣기
       if (e.key === 'r' || e.key === 'R') {
         e.preventDefault();
-        if (studyMode === 'flashcard' && isKoToEn) {
+        if (studyMode === 'cloze') {
+          speakExampleOrWord(currentItem, speechRate);
+        } else if (studyMode === 'flashcard' && isKoToEn) {
           speakWord(currentItem.word, speechRate);
         } else if (isFlipped || spellingResult) {
           speakExampleOrWord(currentItem, speechRate);
@@ -1678,6 +1703,29 @@ export function App() {
   const handleCheckSpelling = (e: FormEvent) => {
     e.preventDefault();
     submitSpellingAnswer();
+  };
+
+  const submitClozeAnswer = () => {
+    if (!currentItem || !currentClozeData) return;
+    const cleanInput = clozeInput.trim();
+    if (!cleanInput) {
+      setIsFlipped(true);
+      speakExampleOrWord(currentItem, speechRate);
+      return;
+    }
+    const inputNorm = cleanInput.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const matchedNorm = currentClozeData.matchedWord.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const targetNorm = currentClozeData.targetWord.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const isCorrect = inputNorm === matchedNorm || inputNorm === targetNorm;
+    setClozeResult(isCorrect ? 'correct' : 'wrong');
+    setIsFlipped(true);
+    speakExampleOrWord(currentItem, speechRate);
+  };
+
+  const handleCheckCloze = (e: FormEvent) => {
+    e.preventDefault();
+    submitClozeAnswer();
   };
 
   const handleSyncFromNas = async (
@@ -3224,6 +3272,198 @@ export function App() {
                         </div>
                     )}
                   </>
+              ) : studyMode === 'cloze' ? (
+                  <>
+                    <div className="study-card">
+                      <div className="card-top-row">
+                        <div className="card-badges-left">
+                          <span className="badge-state">
+                            {isCramMode ? '⚡ 자유 복습' : getStateLabel(currentItem.card.state)}
+                          </span>
+                          <span
+                              className="badge-state"
+                              style={{ background: '#e0f2fe', color: '#0369a1', fontWeight: 800 }}
+                          >
+                            <Puzzle size={12} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />
+                            예문 빈칸
+                          </span>
+                          <button
+                              type="button"
+                              className="cat-badge"
+                              onClick={() => setShowGgModal(true)}
+                          >
+                            <FolderOpen size={12} />
+                            {normalizeCategory(currentItem.tag)}
+                          </button>
+                          {isWeakItem(currentItem) && (
+                              <span
+                                  className="badge-state"
+                                  style={{ background: '#ffedd5', color: '#c2410c' }}
+                              >
+                                🔥 취약
+                              </span>
+                          )}
+                        </div>
+                        <div className="card-actions-right">
+                          <button
+                              type="button"
+                              className={`star-circle-btn ${currentItem.starred ? 'active' : ''}`}
+                              title="별표(⭐) 체크/해제"
+                              onClick={(e) => handleToggleStar(currentItem.id, e)}
+                          >
+                            <Star
+                                size={18}
+                                fill={currentItem.starred ? 'currentColor' : 'none'}
+                            />
+                          </button>
+                          <button
+                              type="button"
+                              className="icon-circle-btn"
+                              title="예문/발음 듣기"
+                              onClick={() => speakExampleOrWord(currentItem, speechRate)}
+                          >
+                            <Volume2 size={19} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="card-center">
+                        <div className="cloze-card-prompt">
+                          <Sparkles size={13} />
+                          문맥에 알맞은 영어 단어를 맞춰보세요
+                        </div>
+
+                        {currentClozeData && (
+                          <>
+                            <div className="cloze-sentence-display">
+                              {currentClozeData.prefix}
+                              {!isFlipped ? (
+                                <span className="cloze-blank-box">[ _____ ]</span>
+                              ) : (
+                                <span className="cloze-revealed-word">{currentClozeData.matchedWord}</span>
+                              )}
+                              {currentClozeData.suffix}
+                            </div>
+
+                            <div className="cloze-translation-box">
+                              <span className="cloze-ko-label">해석</span>
+                              <span className="cloze-ko-text">{currentClozeData.koreanTranslation}</span>
+                            </div>
+
+                            {!isFlipped ? (
+                              <>
+                                <div className="spelling-helpers">
+                                  <button
+                                      type="button"
+                                      className="helper-chip"
+                                      onClick={() => speakWord(currentItem.word, speechRate)}
+                                  >
+                                    <Volume2 size={14} />
+                                    발음 힌트
+                                  </button>
+                                  <button
+                                      type="button"
+                                      className="helper-chip"
+                                      onClick={() => setShowHint((prev) => !prev)}
+                                  >
+                                    <HelpCircle size={14} />
+                                    첫 글자 힌트
+                                  </button>
+                                </div>
+
+                                {showHint && (
+                                  <div className="hint-text">
+                                    {currentClozeData.targetWord[0]}{' '}
+                                    {'_ '.repeat(Math.max(0, currentClozeData.targetWord.length - 1))} (
+                                    {currentClozeData.targetWord.length}글자)
+                                  </div>
+                                )}
+
+                                <form className="cloze-form" onSubmit={handleCheckCloze}>
+                                  <input
+                                      ref={clozeInputRef}
+                                      type="text"
+                                      className="cloze-input"
+                                      placeholder="빈칸에 들어갈 영어 단어 입력..."
+                                      value={clozeInput}
+                                      onChange={(e) => setClozeInput(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          submitClozeAnswer();
+                                        }
+                                      }}
+                                      enterKeyHint="done"
+                                      autoCapitalize="none"
+                                      autoCorrect="off"
+                                      spellCheck={false}
+                                  />
+                                  <button
+                                      type="submit"
+                                      className="submit-btn"
+                                      onClick={handleCheckCloze}
+                                  >
+                                    확인
+                                  </button>
+                                </form>
+                                <div className="cloze-skip-hint">
+                                  💡 생각 후 입력 없이 바로 하단 [정답 확인하기 (Space)]를 눌러도 됩니다
+                                </div>
+                              </>
+                            ) : (
+                              <div className="cloze-detail-card">
+                                {clozeResult && (
+                                  <div className={`spelling-feedback ${clozeResult}`} style={{ margin: '0 0 12px 0' }}>
+                                    <div className="feedback-badge">
+                                      {clozeResult === 'correct' ? (
+                                        <>
+                                          <Check size={18} />
+                                          정답입니다!
+                                        </>
+                                      ) : (
+                                        <>
+                                          <X size={18} />
+                                          아쉬워요! 내가 쓴 답: &ldquo;{clozeInput}&rdquo;
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                                <div className="cloze-word-head">
+                                  <span className="cloze-word-title">{currentItem.word}</span>
+                                  {currentItem.phonetic && (
+                                    <span className="cloze-word-phonetic">{currentItem.phonetic}</span>
+                                  )}
+                                  <button
+                                      type="button"
+                                      className="icon-circle-btn"
+                                      style={{ width: 28, height: 28, marginLeft: 'auto' }}
+                                      onClick={() => speakWord(currentItem.word, speechRate)}
+                                      title="단어 발음 듣기"
+                                  >
+                                    <Volume2 size={15} />
+                                  </button>
+                                </div>
+                                <div className="cloze-revealed-meaning">
+                                  {expandMeaningAbbreviations(currentItem.meaning)}
+                                </div>
+                                {currentItem.example && (
+                                  <div
+                                      className="example-box"
+                                      onClick={() => speakExampleOrWord(currentItem, speechRate)}
+                                      title="클릭하여 전체 예문 다시 듣기"
+                                  >
+                                    <Volume2 size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />
+                                    {currentItem.example}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </>
               ) : (
                   <>
                     <div className="study-card">
@@ -3383,6 +3623,18 @@ export function App() {
                   </button>
                   <button
                       type="button"
+                      className={`mode-btn ${studyMode === 'cloze' ? 'active' : ''}`}
+                      onClick={() => {
+                        if (studyMode === 'autoplay') exitAutoPlay();
+                        setStudyMode('cloze');
+                        resetCardInteraction();
+                      }}
+                  >
+                    <Puzzle size={14} />
+                    예문 빈칸
+                  </button>
+                  <button
+                      type="button"
                       className={`mode-btn ${studyMode === 'spelling' ? 'active' : ''}`}
                       onClick={() => {
                         if (studyMode === 'autoplay') exitAutoPlay();
@@ -3437,18 +3689,25 @@ export function App() {
               {studyMode !== 'autoplay' && currentItem && (
                   <div className="study-fixed-dock">
                     <div className="study-fixed-dock-inner">
-                      {studyMode === 'flashcard' && !isFlipped ? (
+                      {(studyMode === 'flashcard' || studyMode === 'cloze') && !isFlipped ? (
                           <button
                               type="button"
                               className="dock-show-answer-btn"
-                              onClick={() => setIsFlipped(true)}
+                              onClick={() => {
+                                setIsFlipped(true);
+                                if (studyMode === 'cloze') {
+                                  speakExampleOrWord(currentItem, speechRate);
+                                }
+                              }}
                               title="정답 확인 (단축키: 스페이스바)"
                           >
                             <RotateCcw size={20} />
                             <span>정답 확인하기</span>
                             <span className="dock-key-tag">Space</span>
                           </button>
-                      ) : (studyMode === 'flashcard' && isFlipped) || (studyMode === 'spelling' && spellingResult) ? (
+                      ) : (studyMode === 'flashcard' && isFlipped) ||
+                          (studyMode === 'cloze' && (isFlipped || clozeResult !== null)) ||
+                          (studyMode === 'spelling' && spellingResult) ? (
                           <div className="rating-grid">
                             {ratingOptions.map((opt) => (
                                 <button

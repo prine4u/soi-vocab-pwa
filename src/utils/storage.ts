@@ -164,6 +164,186 @@ export function extractEnglishOnly(rawExample?: string): string {
     return lines.join(' ');
 }
 
+const IRREGULAR_VERBS: Record<string, string[]> = {
+    be: ['am', 'is', 'are', 'was', 'were', 'been', 'being'],
+    see: ['saw', 'seen', 'seeing', 'sees'],
+    go: ['went', 'gone', 'going', 'goes'],
+    do: ['did', 'done', 'doing', 'does'],
+    have: ['has', 'had', 'having'],
+    take: ['took', 'taken', 'taking', 'takes'],
+    make: ['made', 'making', 'makes'],
+    get: ['got', 'gotten', 'getting', 'gets'],
+    give: ['gave', 'given', 'giving', 'gives'],
+    find: ['found', 'finding', 'finds'],
+    think: ['thought', 'thinking', 'thinks'],
+    tell: ['told', 'telling', 'tells'],
+    say: ['said', 'saying', 'says'],
+    buy: ['bought', 'buying', 'buys'],
+    come: ['came', 'coming', 'comes'],
+    run: ['ran', 'running', 'runs'],
+    know: ['knew', 'known', 'knowing', 'knows'],
+    write: ['wrote', 'written', 'writing', 'writes'],
+    speak: ['spoke', 'spoken', 'speaking', 'speaks'],
+    drive: ['drove', 'driven', 'driving', 'drives'],
+    eat: ['ate', 'eaten', 'eating', 'eats'],
+    drink: ['drank', 'drunk', 'drinking', 'drinks'],
+    sing: ['sang', 'sung', 'singing', 'sings'],
+    break: ['broke', 'broken', 'breaking', 'breaks'],
+    meet: ['met', 'meeting', 'meets'],
+    send: ['sent', 'sending', 'sends'],
+    leave: ['left', 'leaving', 'leaves'],
+    keep: ['kept', 'keeping', 'keeps'],
+    feel: ['felt', 'feeling', 'feels'],
+    bring: ['brought', 'bringing', 'brings'],
+    build: ['built', 'building', 'builds'],
+    catch: ['caught', 'catching', 'catches'],
+    choose: ['chose', 'chosen', 'choosing', 'chooses'],
+    draw: ['drew', 'drawn', 'drawing', 'draws'],
+    fall: ['fell', 'fallen', 'falling', 'falls'],
+    fly: ['flew', 'flown', 'flying', 'flies'],
+    grow: ['grew', 'grown', 'growing', 'grows'],
+    hear: ['heard', 'hearing', 'hears'],
+    hide: ['hid', 'hidden', 'hiding', 'hides'],
+    hold: ['held', 'holding', 'holds'],
+    lose: ['lost', 'losing', 'loses'],
+    pay: ['paid', 'paying', 'pays'],
+    read: ['read', 'reading', 'reads'],
+    ride: ['rode', 'ridden', 'riding', 'rides'],
+    ring: ['rang', 'rung', 'ringing', 'rings'],
+    rise: ['rose', 'risen', 'rising', 'rises'],
+    sell: ['sold', 'selling', 'sells'],
+    sit: ['sat', 'sitting', 'sits'],
+    sleep: ['slept', 'sleeping', 'sleeps'],
+    spend: ['spent', 'spending', 'spends'],
+    stand: ['stood', 'standing', 'stands'],
+    swim: ['swam', 'swum', 'swimming', 'swims'],
+    teach: ['taught', 'teaching', 'teaches'],
+    throw: ['threw', 'thrown', 'throwing', 'throws'],
+    understand: ['understood', 'understanding', 'understands'],
+    wear: ['wore', 'worn', 'wearing', 'wears'],
+    win: ['won', 'winning', 'wins'],
+};
+
+export interface ClozeData {
+    hasExample: boolean;
+    clozeSentence: string;
+    fullSentence: string;
+    targetWord: string;
+    matchedWord: string;
+    koreanTranslation: string;
+    prefix: string;
+    suffix: string;
+}
+
+/**
+ * 예문에서 핵심 단어를 찾아 [ _____ ] 빈칸으로 뚫고 문맥 정보와 번역을 추출하는 Anki Cloze 생성기
+ */
+export function generateClozeData(
+    word: string,
+    meaning: string,
+    rawExample?: string
+): ClozeData {
+    const cleanWord = word.trim().replace(/\s*\([^)]*\)/g, '').trim();
+    const cleanMeaning = expandMeaningAbbreviations(meaning);
+
+    if (!rawExample || !rawExample.trim()) {
+        return {
+            hasExample: false,
+            clozeSentence: '[ _____ ]',
+            fullSentence: cleanWord,
+            targetWord: cleanWord,
+            matchedWord: cleanWord,
+            koreanTranslation: cleanMeaning,
+            prefix: '',
+            suffix: '',
+        };
+    }
+
+    const rawLines = rawExample
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !/^[+*•※]/.test(l));
+
+    const escapeRegex = (s: string) => s.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const wordLower = cleanWord.toLowerCase();
+    const searchVariants = new Set<string>();
+    searchVariants.add(escapeRegex(cleanWord));
+
+    if (IRREGULAR_VERBS[wordLower]) {
+        IRREGULAR_VERBS[wordLower].forEach((v) => searchVariants.add(escapeRegex(v)));
+    }
+
+    const baseStem = cleanWord.endsWith('e')
+        ? cleanWord.slice(0, -1)
+        : cleanWord.endsWith('y')
+        ? cleanWord.slice(0, -1)
+        : cleanWord;
+    searchVariants.add(`${escapeRegex(cleanWord)}(?:s|es|d|ed|ing|ly)?`);
+    if (baseStem !== cleanWord) {
+        searchVariants.add(`${escapeRegex(baseStem)}(?:e|es|ed|ing|ied|ies|y)?`);
+    }
+
+    const patternString = `\\b(${Array.from(searchVariants).join('|')})\\b`;
+    const regex = new RegExp(patternString, 'i');
+
+    for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i];
+        const koreanCharCount = (line.match(/[ㄱ-ㅎㅏ-ㅣ가-힣]/g) || []).length;
+        const englishCharCount = (line.match(/[a-zA-Z]/g) || []).length;
+
+        if (englishCharCount >= 3) {
+            const cleanedEng = line.replace(/^[A-Za-z]\s*:\s*/g, '').trim();
+            const match = cleanedEng.match(regex);
+
+            if (match && typeof match.index === 'number') {
+                const matchedWord = match[0];
+                const prefix = cleanedEng.slice(0, match.index);
+                const suffix = cleanedEng.slice(match.index + matchedWord.length);
+
+                let translation = '';
+                if (i + 1 < rawLines.length) {
+                    const nextLine = rawLines[i + 1].trim();
+                    if (/[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(nextLine)) {
+                        translation = nextLine.replace(/^[A-Za-z]\s*:\s*/g, '').trim();
+                    }
+                }
+                if (!translation && koreanCharCount > 0) {
+                    translation = line.replace(/[a-zA-Z0-9.,?!'"~:;-]/g, ' ').replace(/\s+/g, ' ').trim();
+                }
+                if (!translation) {
+                    translation = cleanMeaning;
+                }
+
+                return {
+                    hasExample: true,
+                    clozeSentence: `${prefix}[ _____ ]${suffix}`,
+                    fullSentence: cleanedEng,
+                    targetWord: cleanWord,
+                    matchedWord,
+                    koreanTranslation: translation,
+                    prefix,
+                    suffix,
+                };
+            }
+        }
+    }
+
+    // 예문에서 직접 일치하는 단어를 못 찾은 경우 첫 번째 영어 문장과 한글 번역 사용
+    const firstEngLine = rawLines.find((l) => /[a-zA-Z]{3,}/.test(l)) || rawLines[0];
+    const firstKoLine = rawLines.find((l) => /[ㄱ-ㅎㅏ-ㅣ가-힣]{2,}/.test(l)) || cleanMeaning;
+
+    return {
+        hasExample: true,
+        clozeSentence: `[ _____ ] : ${firstEngLine}`,
+        fullSentence: `${cleanWord} : ${firstEngLine}`,
+        targetWord: cleanWord,
+        matchedWord: cleanWord,
+        koreanTranslation: firstKoLine,
+        prefix: '',
+        suffix: ` : ${firstEngLine}`,
+    };
+}
+
 export function formatFolderSegment(raw: string): string {
     let s = raw.trim();
     if (!s) return '';
