@@ -2991,3 +2991,263 @@ body {
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
 }
 
+/* UI Redundancy Cleanup & Convenience Feature Styles */
+
+/* Header Help Circle Button */
+.help-circle-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #64748b;
+    cursor: pointer;
+    padding: 0;
+    transition: all 0.15s ease;
+}
+.help-circle-btn:hover {
+    background: #fef9c3;
+    color: #854d0e;
+    border-color: #facc15;
+}
+
+/* Header Fast Filter Group */
+.header-filter-group {
+    display: inline-flex;
+    align-items: center;
+    background: #f1f5f9;
+    padding: 2px;
+    border-radius: 9999px;
+    gap: 2px;
+}
+.header-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 9999px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.header-filter-chip:hover {
+    color: #0f172a;
+}
+.header-filter-chip.active {
+    background: #ffffff;
+    color: #0f172a;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+}
+.header-filter-chip.star.active {
+    background: #fef08a;
+    color: #854d0e;
+}
+.header-filter-chip.weak.active {
+    background: #ffedd5;
+    color: #c2410c;
+}
+
+/* Card Pencil (Quick Typo Edit) Button */
+.pencil-circle-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #64748b;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.pencil-circle-btn:hover {
+    background: #f8fafc;
+    color: #0f172a;
+    border-color: #94a3b8;
+    transform: scale(1.05);
+}
+
+/* Settings Modal FSRS Info Link Button */
+.fsrs-info-link-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 14px;
+    background: #fefce8;
+    border: 1px solid #fef08a;
+    border-radius: 14px;
+    color: #713f12;
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.fsrs-info-link-btn:hover {
+    background: #fef9c3;
+    border-color: #facc15;
+}
+
+/* Study Card Min-Height for Flashcard Mode */
+.study-card.flashcard-card {
+    min-height: clamp(400px, 50vh, 480px);
+}
+.study-card.spelling-card {
+    min-height: 340px;
+}
+
+/* Example Wrapper & Dedicated TTS Button */
+.example-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    width: 100%;
+}
+.example-wrapper .example-box {
+    flex: 1;
+    margin-top: 0 !important;
+}
+.example-tts-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #fef08a;
+    border: 1px solid #facc15;
+    color: #854d0e;
+    font-size: 0.74rem;
+    font-weight: 700;
+    padding: 8px 12px;
+    border-radius: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+}
+.example-tts-btn:hover {
+    background: #fde047;
+    transform: scale(1.02);
+}
+@media (max-width: 480px) {
+    .example-wrapper {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+    }
+    .example-tts-btn {
+        align-self: flex-end;
+        padding: 5px 10px;
+    }
+}
+
+/* Spelling Length Hint */
+.spelling-length-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin: 8px 0 12px;
+    font-size: 0.82rem;
+}
+.length-badge {
+    background: #f1f5f9;
+    color: #475569;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-weight: 800;
+    font-size: 0.74rem;
+}
+.length-slots {
+    display: inline-flex;
+    gap: 4px;
+}
+.slot-char {
+    display: inline-block;
+    min-width: 14px;
+    font-family: monospace;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #94a3b8;
+    text-align: center;
+    border-bottom: 2px solid #cbd5e1;
+    transition: all 0.15s ease;
+}
+.slot-char.filled {
+    color: #0f172a;
+    border-bottom-color: #0f172a;
+}
+
+/* Spelling Character Diff Box on Wrong Answer */
+.spelling-diff-box {
+    background: #ffffff;
+    border: 1.5px solid #fed7aa;
+    border-radius: 16px;
+    padding: 12px 14px;
+    margin: 10px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    text-align: left;
+}
+.diff-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.diff-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #64748b;
+    min-width: 68px;
+}
+.diff-letters {
+    display: inline-flex;
+    gap: 3px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 1.05rem;
+    font-weight: 800;
+}
+.diff-letter {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 26px;
+    padding: 0 4px;
+    border-radius: 6px;
+}
+.diff-letter.match {
+    background: #dcfce7;
+    color: #15803d;
+}
+.diff-letter.mismatch {
+    background: #fee2e2;
+    color: #dc2626;
+    border-bottom: 2px solid #ef4444;
+}
+.diff-letter.target-correct {
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px dashed #86efac;
+}
+.diff-empty {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    font-style: italic;
+}
+.phonetic-display.inline {
+    display: inline-block;
+    margin: 0 0 0 6px;
+    font-size: 0.85rem;
+}
+

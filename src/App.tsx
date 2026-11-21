@@ -430,6 +430,13 @@ export function App() {
     return [0, 10, 20, 30, 50].includes(saved) ? saved : 20;
   });
 
+  // OCR 오타 즉시 수정 인라인 모달 상태
+  const [quickEditItem, setQuickEditItem] = useState<VocabItem | null>(null);
+  const [quickEditWord, setQuickEditWord] = useState<string>('');
+  const [quickEditMeaning, setQuickEditMeaning] = useState<string>('');
+  const [quickEditPhonetic, setQuickEditPhonetic] = useState<string>('');
+  const [quickEditExample, setQuickEditExample] = useState<string>('');
+
   const [todayNewStudiedCount, setTodayNewStudiedCount] = useState<number>(() => {
     return loadTodayNewStudiedCount();
   });
@@ -618,6 +625,41 @@ export function App() {
     });
     return ordered;
   }, [customCategories, items]);
+
+  const handleOpenQuickEdit = (item: VocabItem, e?: ReactMouseEvent) => {
+    if (e) e.stopPropagation();
+    setQuickEditItem(item);
+    setQuickEditWord(item.word);
+    setQuickEditMeaning(item.meaning);
+    setQuickEditPhonetic(item.phonetic || '');
+    setQuickEditExample(item.example || '');
+  };
+
+  const handleSaveQuickEdit = () => {
+    if (!quickEditItem) return;
+    const trimmedWord = quickEditWord.trim();
+    const trimmedMeaning = quickEditMeaning.trim();
+    if (!trimmedWord || !trimmedMeaning) {
+      showToast('단어와 뜻을 입력해 주세요.');
+      return;
+    }
+    const updatedItems = items.map((it) =>
+      it.id === quickEditItem.id
+        ? {
+            ...it,
+            word: trimmedWord,
+            meaning: trimmedMeaning,
+            phonetic: quickEditPhonetic.trim() || undefined,
+            example: quickEditExample.trim() || undefined,
+          }
+        : it
+    );
+    setItems(updatedItems);
+    saveVocabItems(updatedItems);
+    scheduleCloudPush(updatedItems, allCategories, stats);
+    showToast(`✏️ "${trimmedWord}" 단어 정보가 수정되었습니다.`);
+    setQuickEditItem(null);
+  };
 
   const categoryTree = useMemo<CategoryTreeNode[]>(() => {
     return buildCategoryTree(allCategories);
@@ -995,7 +1037,6 @@ export function App() {
     setIsFlipped(false);
     setAutoPlayIndex(0);
     autoPlaySpeechCancelledRef.current = false;
-    showToast('⚡ 자동 재생 (깜빡이 모드) 시작! 눈과 귀로 편하게 암기하세요.');
   };
 
   const exitAutoPlay = () => {
@@ -2212,11 +2253,11 @@ export function App() {
                 <h1 className="app-title">소이의 단어 암기장</h1>
                 <button
                     type="button"
-                    className="fsrs-info-btn"
+                    className="help-circle-btn"
                     onClick={() => setShowFsrsModal(true)}
+                    title="FSRS 과학적 암기법이란?"
                 >
-                  <Sparkles size={13} />
-                  FSRS 암기법이란?
+                  <HelpCircle size={14} />
                 </button>
               </div>
               <div className="header-meta-row">
@@ -2279,6 +2320,52 @@ export function App() {
                     ({selectedPoolItems.length})
                   </span>
                 </button>
+
+                {/* 메인 학습 화면 빠른 필터 전환 (전체 / ⭐ / 🔥) */}
+                <div className="header-filter-group" title="학습 단어 필터 (전체 / 별표 / 취약)">
+                  <button
+                    type="button"
+                    className={`header-filter-chip ${studyFilter === 'all' ? 'active' : ''}`}
+                    onClick={() => {
+                      setStudyFilter('all');
+                      if (isCramMode) setCramQueueIds(selectedPoolItems.map((it) => it.id));
+                      resetCardInteraction();
+                    }}
+                    title="모든 단어 학습"
+                  >
+                    전체
+                  </button>
+                  <button
+                    type="button"
+                    className={`header-filter-chip star ${studyFilter === 'starred' ? 'active' : ''}`}
+                    onClick={() => {
+                      setStudyFilter('starred');
+                      if (isCramMode) {
+                        setCramQueueIds(selectedPoolItems.filter((it) => it.starred).map((it) => it.id));
+                      }
+                      resetCardInteraction();
+                    }}
+                    title={`별표 단어만 학습 (${starredCount}개)`}
+                  >
+                    <Star size={11} fill={studyFilter === 'starred' ? 'currentColor' : 'none'} />
+                    <span>{starredCount}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`header-filter-chip weak ${studyFilter === 'weak' ? 'active' : ''}`}
+                    onClick={() => {
+                      setStudyFilter('weak');
+                      if (isCramMode) {
+                        setCramQueueIds(selectedPoolItems.filter((it) => isWeakItem(it)).map((it) => it.id));
+                      }
+                      resetCardInteraction();
+                    }}
+                    title={`취약 단어만 학습 (${weakCount}개)`}
+                  >
+                    <Flame size={11} />
+                    <span>{weakCount}</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -2907,8 +2994,8 @@ export function App() {
                   >
                     <Zap size={15} />
                     {isCramMode
-                        ? '⚡ 자유 복습(벼락치기) 종료하고 일반 모드로 복귀'
-                        : `⚡ FSRS 일정 유지한 채 자유 복습(벼락치기) 시작 (${filteredPoolItems.length}단어)`}
+                        ? '자유 복습(벼락치기) 종료하고 일반 모드로 복귀'
+                        : `FSRS 일정 유지한 채 자유 복습(벼락치기) 시작 (${filteredPoolItems.length}단어)`}
                   </button>
                 </div>
 
@@ -2990,6 +3077,24 @@ export function App() {
                   </div>
                 </div>
 
+                {/* FSRS 과학적 망각곡선 원리 상세 안내 링크 */}
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
+                  <button
+                    type="button"
+                    className="fsrs-info-link-btn"
+                    onClick={() => {
+                      setShowBottomStats(false);
+                      setShowFsrsModal(true);
+                    }}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <Sparkles size={15} color="#eab308" />
+                      <span>FSRS 망각곡선 암기법이란? (과학적 원리 알아보기)</span>
+                    </span>
+                    <ChevronRight size={15} />
+                  </button>
+                </div>
+
                 <button
                     type="button"
                     className="primary-full-btn"
@@ -3019,6 +3124,104 @@ export function App() {
               );
             }}
         />
+
+        {/* ✏️ 단어 즉시 수정 (오타 교정) 인라인 모달 */}
+        {quickEditItem && (
+          <div className="gg-modal-backdrop" onClick={() => setQuickEditItem(null)}>
+            <div className="gg-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+              <div className="gg-modal-header">
+                <span className="gg-modal-title">
+                  <Pencil size={18} color="#eab308" />
+                  단어 오타 즉시 수정
+                </span>
+                <button
+                  type="button"
+                  className="mini-icon-btn"
+                  onClick={() => setQuickEditItem(null)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#475569', marginBottom: 4 }}>
+                    영어 단어 *
+                  </label>
+                  <input
+                    type="text"
+                    className="text-input"
+                    style={{ width: '100%', fontSize: '0.95rem', fontWeight: 700 }}
+                    value={quickEditWord}
+                    onChange={(e) => setQuickEditWord(e.target.value)}
+                    placeholder="단어 스펠링..."
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#475569', marginBottom: 4 }}>
+                    발음 기호 (선택)
+                  </label>
+                  <input
+                    type="text"
+                    className="text-input"
+                    style={{ width: '100%', fontSize: '0.85rem' }}
+                    value={quickEditPhonetic}
+                    onChange={(e) => setQuickEditPhonetic(e.target.value)}
+                    placeholder="예: [həˈləʊ]"
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#475569', marginBottom: 4 }}>
+                    한국어 뜻 *
+                  </label>
+                  <input
+                    type="text"
+                    className="text-input"
+                    style={{ width: '100%', fontSize: '0.9rem' }}
+                    value={quickEditMeaning}
+                    onChange={(e) => setQuickEditMeaning(e.target.value)}
+                    placeholder="단어의 한글 뜻..."
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#475569', marginBottom: 4 }}>
+                    영어 예문 (선택)
+                  </label>
+                  <textarea
+                    className="text-input"
+                    rows={3}
+                    style={{ width: '100%', fontSize: '0.82rem', resize: 'vertical' }}
+                    value={quickEditExample}
+                    onChange={(e) => setQuickEditExample(e.target.value)}
+                    placeholder="영어 예문 및 한글 해석..."
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ padding: '8px 16px' }}
+                    onClick={() => setQuickEditItem(null)}
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    style={{ padding: '8px 18px', fontWeight: 800 }}
+                    onClick={handleSaveQuickEdit}
+                  >
+                    저장하기
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {activeTab === 'study' && (
             <div className="study-main">
@@ -3152,7 +3355,7 @@ export function App() {
               ) : studyMode === 'flashcard' || studyMode === 'autoplay' ? (
                   <>
                     <div
-                        className="study-card clickable"
+                        className={`study-card clickable ${studyMode === 'flashcard' ? 'flashcard-card' : ''}`}
                         onClick={() => {
                           if (studyMode === 'autoplay') {
                             setIsAutoPlayPlaying((prev) => !prev);
@@ -3184,13 +3387,6 @@ export function App() {
                                 ? '⚡ 자유 복습'
                                 : getStateLabel(currentItem.card.state)}
                           </span>
-                          {flashcardDirection !== 'en-ko' && (
-                              <span className="dir-badge">
-                                {flashcardDirection === 'random'
-                                    ? `🔀 랜덤 (${isKoToEn ? '한→영' : '영→한'})`
-                                    : '한 → 영'}
-                              </span>
-                          )}
                           <button
                               type="button"
                               className="cat-badge"
@@ -3216,6 +3412,14 @@ export function App() {
                         <div className="card-actions-right">
                           <button
                               type="button"
+                              className="pencil-circle-btn"
+                              title="단어 오타 즉시 수정"
+                              onClick={(e) => handleOpenQuickEdit(currentItem, e)}
+                          >
+                            <Pencil size={15} />
+                          </button>
+                          <button
+                              type="button"
                               className={`star-circle-btn ${currentItem.starred ? 'active' : ''}`}
                               title="별표(⭐) 체크/해제"
                               onClick={(e) => handleToggleStar(currentItem.id, e)}
@@ -3225,31 +3429,32 @@ export function App() {
                                 fill={currentItem.starred ? 'currentColor' : 'none'}
                             />
                           </button>
-                          <button
-                              type="button"
-                              className="icon-circle-btn"
-                              title={
-                                isKoToEn
-                                    ? !isFlipped
-                                        ? '발음 힌트 듣기'
-                                        : '정답 단어 발음 듣기'
-                                    : isFlipped
-                                        ? '영어 예문 듣기'
-                                        : '단어 발음 듣기'
-                              }
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (isKoToEn) {
-                                  speakWord(currentItem.word, speechRate);
-                                } else if (isFlipped) {
-                                  speakExampleOrWord(currentItem, speechRate);
-                                } else {
-                                  speakWord(currentItem.word, speechRate);
+                          {/* 한→영 문제 화면(!isFlipped)에서는 스포일러 방지를 위해 우측 상단 스피커 숨김 (중앙 발음 힌트 버튼으로 일원화) */}
+                          {(isFlipped || !isKoToEn) && (
+                            <button
+                                type="button"
+                                className="icon-circle-btn"
+                                title={
+                                  isKoToEn
+                                      ? '정답 단어 발음 듣기'
+                                      : isFlipped
+                                          ? '영어 예문 듣기'
+                                          : '단어 발음 듣기'
                                 }
-                              }}
-                          >
-                            <Volume2 size={19} />
-                          </button>
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (isKoToEn) {
+                                    speakWord(currentItem.word, speechRate);
+                                  } else if (isFlipped) {
+                                    speakExampleOrWord(currentItem, speechRate);
+                                  } else {
+                                    speakWord(currentItem.word, speechRate);
+                                  }
+                                }}
+                            >
+                              <Volume2 size={19} />
+                            </button>
+                          )}
                         </div>
                       </div>
 
@@ -3265,15 +3470,29 @@ export function App() {
                                   <>
                                     <div className="meaning-display">{currentItem.meaning}</div>
                                     {currentItem.example && (
-                                        <div
-                                            className="example-box"
-                                            title="터치하면 영어 예문을 다시 읽어줍니다"
+                                        <div className="example-wrapper">
+                                          <div
+                                              className="example-box"
+                                              title="터치하면 영어 예문을 다시 읽어줍니다"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                speakExampleOrWord(currentItem, speechRate);
+                                              }}
+                                          >
+                                            {currentItem.example}
+                                          </div>
+                                          <button
+                                            type="button"
+                                            className="example-tts-btn"
+                                            title="영어 예문만 다시 듣기"
                                             onClick={(e) => {
                                               e.stopPropagation();
                                               speakExampleOrWord(currentItem, speechRate);
                                             }}
-                                        >
-                                          {currentItem.example}
+                                          >
+                                            <Volume2 size={14} />
+                                            <span>예문 듣기</span>
+                                          </button>
                                         </div>
                                     )}
                                   </>
@@ -3287,28 +3506,30 @@ export function App() {
                               <div className="meaning-display reverse-front">
                                 {getSpellingPromptMeaning(currentItem.meaning, currentItem.word)}
                               </div>
-                              <div
-                                  className="spelling-helpers"
-                                  onClick={(e) => e.stopPropagation()}
-                              >
-                                <button
-                                    type="button"
-                                    className="helper-chip"
-                                    onClick={() => speakWord(currentItem.word, speechRate)}
+                              {studyMode !== 'autoplay' && (
+                                <div
+                                    className="spelling-helpers"
+                                    onClick={(e) => e.stopPropagation()}
                                 >
-                                  <Volume2 size={14} />
-                                  발음 힌트
-                                </button>
-                                <button
-                                    type="button"
-                                    className="helper-chip"
-                                    onClick={() => setShowHint((prev) => !prev)}
-                                >
-                                  <HelpCircle size={14} />
-                                  첫 글자 힌트
-                                </button>
-                              </div>
-                              {showHint && (
+                                  <button
+                                      type="button"
+                                      className="helper-chip"
+                                      onClick={() => speakWord(currentItem.word, speechRate)}
+                                  >
+                                    <Volume2 size={14} />
+                                    발음 힌트
+                                  </button>
+                                  <button
+                                      type="button"
+                                      className="helper-chip"
+                                      onClick={() => setShowHint((prev) => !prev)}
+                                  >
+                                    <HelpCircle size={14} />
+                                    첫 글자 힌트
+                                  </button>
+                                </div>
+                              )}
+                              {studyMode !== 'autoplay' && showHint && (
                                   <div className="hint-text">
                                     {currentItem.word[0]}{' '}
                                     {'_ '.repeat(Math.max(0, currentItem.word.length - 1))} (
@@ -3333,15 +3554,29 @@ export function App() {
                               )}
                               <div className="meaning-display">{currentItem.meaning}</div>
                               {currentItem.example && (
-                                  <div
-                                      className="example-box"
-                                      title="터치하면 영어 예문을 읽어줍니다"
+                                  <div className="example-wrapper">
+                                    <div
+                                        className="example-box"
+                                        title="터치하면 영어 예문을 읽어줍니다"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          speakExampleOrWord(currentItem, speechRate);
+                                        }}
+                                    >
+                                      {currentItem.example}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="example-tts-btn"
+                                      title="영어 예문만 다시 듣기"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         speakExampleOrWord(currentItem, speechRate);
                                       }}
-                                  >
-                                    {currentItem.example}
+                                    >
+                                      <Volume2 size={14} />
+                                      <span>예문 듣기</span>
+                                    </button>
                                   </div>
                               )}
                             </>
@@ -3352,8 +3587,8 @@ export function App() {
                         <RotateCcw size={13} />
                         {studyMode === 'autoplay'
                             ? isAutoPlayPlaying
-                                ? '⚡ 깜빡이 자동 재생 중... (터치하면 일시정지)'
-                                : '⏸ 일시정지됨 (터치하면 다시 시작)'
+                                ? '화면 터치 시 일시정지'
+                                : '화면 터치 시 계속 재생'
                             : !isFlipped
                             ? isKoToEn
                                 ? '카드를 터치하면 정답 영어 단어와 발음을 확인합니다'
@@ -3556,6 +3791,14 @@ export function App() {
                         <div className="card-actions-right">
                           <button
                               type="button"
+                              className="pencil-circle-btn"
+                              title="단어 오타 즉시 수정"
+                              onClick={(e) => handleOpenQuickEdit(currentItem, e)}
+                          >
+                            <Pencil size={15} />
+                          </button>
+                          <button
+                              type="button"
                               className={`star-circle-btn ${currentItem.starred ? 'active' : ''}`}
                               title="별표(⭐) 체크/해제"
                               onClick={(e) => handleToggleStar(currentItem.id, e)}
@@ -3697,13 +3940,23 @@ export function App() {
                                   {expandMeaningAbbreviations(currentItem.meaning)}
                                 </div>
                                 {currentItem.example && (
-                                  <div
-                                      className="example-box"
+                                  <div className="example-wrapper">
+                                    <div
+                                        className="example-box"
+                                        onClick={() => speakExampleOrWord(currentItem, speechRate)}
+                                        title="클릭하여 전체 예문 다시 듣기"
+                                    >
+                                      {currentItem.example}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="example-tts-btn"
+                                      title="영어 예문만 다시 듣기"
                                       onClick={() => speakExampleOrWord(currentItem, speechRate)}
-                                      title="클릭하여 전체 예문 다시 듣기"
-                                  >
-                                    <Volume2 size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />
-                                    {currentItem.example}
+                                    >
+                                      <Volume2 size={14} />
+                                      <span>예문 듣기</span>
+                                    </button>
                                   </div>
                                 )}
                               </div>
@@ -3715,7 +3968,7 @@ export function App() {
                   </>
               ) : (
                   <>
-                    <div className="study-card">
+                    <div className="study-card spelling-card">
                       <div className="card-top-row">
                         <div className="card-badges-left">
                     <span className="badge-state">
@@ -3731,6 +3984,14 @@ export function App() {
                           </button>
                         </div>
                         <div className="card-actions-right">
+                          <button
+                              type="button"
+                              className="pencil-circle-btn"
+                              title="단어 오타 즉시 수정"
+                              onClick={(e) => handleOpenQuickEdit(currentItem, e)}
+                          >
+                            <Pencil size={15} />
+                          </button>
                           <button
                               type="button"
                               className={`star-circle-btn ${currentItem.starred ? 'active' : ''}`}
@@ -3794,33 +4055,50 @@ export function App() {
                         )}
 
                         {!spellingResult ? (
-                            <form className="spelling-form" onSubmit={handleCheckSpelling}>
-                              <input
-                                  ref={spellingInputRef}
-                                  type="text"
-                                  className="spelling-input"
-                                  placeholder="영어 단어 입력 후 엔터..."
-                                  value={typedAnswer}
-                                  onChange={(e) => setTypedAnswer(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      e.preventDefault();
-                                      submitSpellingAnswer();
-                                    }
-                                  }}
-                                  enterKeyHint="done"
-                                  autoCapitalize="none"
-                                  autoCorrect="off"
-                                  spellCheck={false}
-                              />
-                              <button
-                                  type="submit"
-                                  className="submit-btn"
-                                  onClick={handleCheckSpelling}
-                              >
-                                확인
-                              </button>
-                            </form>
+                            <>
+                              <div className="spelling-length-hint">
+                                <span className="length-badge">{currentItem.word.length}글자</span>
+                                <div className="length-slots">
+                                  {currentItem.word.split('').map((_, idx) => (
+                                    <span
+                                      key={idx}
+                                      className={`slot-char ${idx < typedAnswer.length ? 'filled' : ''}`}
+                                    >
+                                      {idx < typedAnswer.length ? typedAnswer[idx] : '_'}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <form className="spelling-form" onSubmit={handleCheckSpelling}>
+                                <input
+                                    ref={spellingInputRef}
+                                    type="text"
+                                    className="spelling-input"
+                                    placeholder="영어 단어 입력 후 엔터..."
+                                    value={typedAnswer}
+                                    onChange={(e) => setTypedAnswer(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        submitSpellingAnswer();
+                                      }
+                                    }}
+                                    enterKeyHint="done"
+                                    autoComplete="off"
+                                    autoCorrect="off"
+                                    autoCapitalize="off"
+                                    spellCheck={false}
+                                />
+                                <button
+                                    type="submit"
+                                    className="submit-btn"
+                                    onClick={handleCheckSpelling}
+                                >
+                                  확인
+                                </button>
+                              </form>
+                            </>
                         ) : (
                             <div className={`spelling-feedback ${spellingResult}`}>
                               <div className="feedback-badge">
@@ -3836,16 +4114,74 @@ export function App() {
                                     </>
                                 )}
                               </div>
-                              <div className="answer-compare">
-                                정답: <strong>{currentItem.word}</strong>{' '}
-                                {currentItem.phonetic && <span>{currentItem.phonetic}</span>}
-                              </div>
+
+                              {spellingResult === 'wrong' ? (
+                                <div className="spelling-diff-box">
+                                  <div className="diff-row">
+                                    <span className="diff-title">내가 쓴 답:</span>
+                                    <div className="diff-letters typed">
+                                      {typedAnswer.trim().length === 0 ? (
+                                        <span className="diff-empty">(미입력)</span>
+                                      ) : (
+                                        typedAnswer.split('').map((ch, idx) => {
+                                          const targetCh = currentItem.word[idx];
+                                          const isMatch = targetCh && ch.toLowerCase() === targetCh.toLowerCase();
+                                          return (
+                                            <span
+                                              key={idx}
+                                              className={`diff-letter ${isMatch ? 'match' : 'mismatch'}`}
+                                              title={isMatch ? '일치' : `틀림 (정답: ${targetCh || '없음'})`}
+                                            >
+                                              {ch}
+                                            </span>
+                                          );
+                                        })
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="diff-row">
+                                    <span className="diff-title">정답 단어:</span>
+                                    <div className="diff-letters target">
+                                      {currentItem.word.split('').map((ch, idx) => {
+                                        const typedCh = typedAnswer[idx];
+                                        const isMatch = typedCh && typedCh.toLowerCase() === ch.toLowerCase();
+                                        return (
+                                          <span
+                                            key={idx}
+                                            className={`diff-letter ${isMatch ? 'match' : 'target-correct'}`}
+                                          >
+                                            {ch}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                    {currentItem.phonetic && <span className="phonetic-display inline">{currentItem.phonetic}</span>}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="answer-compare">
+                                  정답: <strong>{currentItem.word}</strong>{' '}
+                                  {currentItem.phonetic && <span>{currentItem.phonetic}</span>}
+                                </div>
+                              )}
+
                               {currentItem.example && (
-                                  <div
-                                      className="example-box"
+                                  <div className="example-wrapper">
+                                    <div
+                                        className="example-box"
+                                        onClick={() => speakExampleOrWord(currentItem, speechRate)}
+                                    >
+                                      {currentItem.example}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="example-tts-btn"
+                                      title="영어 예문만 다시 듣기"
                                       onClick={() => speakExampleOrWord(currentItem, speechRate)}
-                                  >
-                                    {currentItem.example}
+                                    >
+                                      <Volume2 size={14} />
+                                      <span>예문 듣기</span>
+                                    </button>
                                   </div>
                               )}
                             </div>
@@ -3910,16 +4246,7 @@ export function App() {
                 </div>
                 
                 <div className="sleek-bar-right">
-                  {studyMode === 'autoplay' ? (
-                      <button
-                          type="button"
-                          className="sleek-action-btn"
-                          onClick={exitAutoPlay}
-                          title="깜빡이 모드 닫기"
-                      >
-                        종료
-                      </button>
-                  ) : (
+                  {studyMode !== 'autoplay' && (
                       <button
                           type="button"
                           className="sleek-action-btn"
