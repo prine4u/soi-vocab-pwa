@@ -3251,3 +3251,217 @@ body {
     font-size: 0.85rem;
 }
 
+/* NAS Protected / Child-Proof Management Area */
+.nas-protected-card {
+    border: 1.5px solid #cbd5e1;
+    border-radius: 18px;
+    background: #ffffff;
+    overflow: hidden;
+    margin-top: 14px;
+    transition: all 0.2s ease;
+}
+.nas-protected-card.locked {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+}
+.nas-protected-card.unlocked {
+    background: #ffffff;
+    border-color: #86efac;
+    box-shadow: 0 4px 14px rgba(22, 163, 74, 0.08);
+}
+.nas-accordion-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    gap: 10px;
+    transition: background 0.15s ease;
+}
+.nas-accordion-header:hover {
+    background: rgba(0, 0, 0, 0.02);
+}
+.nas-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+.nas-lock-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.2s ease;
+}
+.nas-lock-icon.locked {
+    background: #fee2e2;
+    color: #dc2626;
+}
+.nas-lock-icon.unlocked {
+    background: #dcfce7;
+    color: #16a34a;
+}
+.nas-header-titles {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.nas-main-title {
+    font-size: 0.84rem;
+    font-weight: 800;
+    color: #0f172a;
+    display: inline-flex;
+    align-items: center;
+}
+.nas-sub-title {
+    font-size: 0.72rem;
+    color: #64748b;
+    margin-top: 1px;
+}
+.nas-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.nas-status-badge {
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 9999px;
+}
+.nas-status-badge.locked {
+    background: #f1f5f9;
+    color: #64748b;
+}
+.nas-status-badge.unlocked {
+    background: #dcfce7;
+    color: #15803d;
+}
+.nas-chevron {
+    color: #94a3b8;
+    transition: transform 0.2s ease;
+}
+.nas-chevron.open {
+    transform: rotate(180deg);
+}
+.nas-accordion-body {
+    padding: 14px;
+    border-top: 1px solid #e2e8f0;
+    background: #f8fafc;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.nas-security-strip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 12px;
+    color: #166534;
+    font-size: 0.76rem;
+    font-weight: 600;
+}
+.nas-re-lock-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    color: #475569;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 4px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+}
+.nas-re-lock-btn:hover {
+    background: #fee2e2;
+    color: #dc2626;
+    border-color: #fca5a5;
+}
+.nas-url-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.nas-url-input {
+    flex: 1;
+    font-family: inherit;
+}
+.nas-eye-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #64748b;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+}
+.nas-eye-btn:hover {
+    background: #f1f5f9;
+    color: #0f172a;
+}
+.nas-actions-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.nas-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    font-size: 0.76rem;
+    font-weight: 700;
+}
+.nas-action-btn.danger {
+    color: #dc2626;
+    border-color: #fecaca;
+    background: #ffffff;
+}
+.nas-action-btn.danger:hover {
+    background: #fee2e2;
+    border-color: #fca5a5;
+}
+
+/* Parent PIN Input */
+.parent-pin-input {
+    width: 160px;
+    height: 48px;
+    font-size: 1.6rem;
+    font-weight: 800;
+    letter-spacing: 0.6rem;
+    text-align: center;
+    border: 2px solid #cbd5e1;
+    border-radius: 14px;
+    background: #f8fafc;
+    color: #0f172a;
+    transition: all 0.15s ease;
+}
+.parent-pin-input:focus {
+    outline: none;
+    border-color: #eab308;
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(234, 179, 8, 0.2);
+}
+

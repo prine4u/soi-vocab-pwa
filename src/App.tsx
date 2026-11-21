@@ -54,6 +54,11 @@ import {
   SkipForward,
   Repeat,
   Puzzle,
+  Lock,
+  Unlock,
+  Eye,
+  EyeOff,
+  AlertTriangle,
 } from 'lucide-react';
 import type {
   VocabItem,
@@ -183,6 +188,8 @@ const STUDY_MODE_STORAGE_KEY = 'soi_vocab_study_mode_v1';
 const STUDY_FILTER_STORAGE_KEY = 'soi_vocab_study_filter_v1';
 const COLLAPSED_FOLDERS_STORAGE_KEY = 'soi_vocab_collapsed_folders_v1';
 const AUTOPLAY_INDEX_STORAGE_KEY = 'soi_vocab_autoplay_index_v1';
+const PARENT_PIN_STORAGE_KEY = 'soi_vocab_parent_pin_v1';
+const DEFAULT_PARENT_PIN = '0000';
 const AUTOPLAY_FOLDER_STORAGE_KEY = 'soi_vocab_autoplay_folder_v1';
 const CRAM_MODE_STORAGE_KEY = 'soi_vocab_cram_mode_v1';
 const CRAM_QUEUE_STORAGE_KEY = 'soi_vocab_cram_queue_v1';
@@ -479,6 +486,54 @@ export function App() {
 
   const [nasUrlInput, setNasUrlInput] = useState<string>(() => loadNasWebhookUrl());
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  // 부모/관리자 보호 영역 상태
+  const [isNasUnlocked, setIsNasUnlocked] = useState<boolean>(false);
+  const [isNasAccordionOpen, setIsNasAccordionOpen] = useState<boolean>(false);
+  const [showNasPinModal, setShowNasPinModal] = useState<boolean>(false);
+  const [parentPinInput, setParentPinInput] = useState<string>('');
+  const [parentPinError, setParentPinError] = useState<string>('');
+  const [showNasWebhookUrl, setShowNasWebhookUrl] = useState<boolean>(false);
+
+  // 위험/중요 작업 2단계 확인 대화상자 상태
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmLabel: string;
+    isDanger?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
+
+  const handleToggleNasAccordion = () => {
+    if (!isNasUnlocked) {
+      setParentPinInput('');
+      setParentPinError('');
+      setShowNasPinModal(true);
+    } else {
+      setIsNasAccordionOpen((prev) => !prev);
+    }
+  };
+
+  const handleVerifyParentPin = (e?: FormEvent) => {
+    if (e) e.preventDefault();
+    const currentPin = localStorage.getItem(PARENT_PIN_STORAGE_KEY) || DEFAULT_PARENT_PIN;
+    if (parentPinInput.trim() === currentPin) {
+      setIsNasUnlocked(true);
+      setIsNasAccordionOpen(true);
+      setShowNasPinModal(false);
+      setParentPinError('');
+      showToast('🔓 보호자 인증 완료! 동기화 관리 영역이 열렸습니다.');
+    } else {
+      setParentPinError('비밀번호가 올바르지 않습니다. (초기값: 0000)');
+    }
+  };
+
+  const handleLockNasArea = () => {
+    setIsNasUnlocked(false);
+    setIsNasAccordionOpen(false);
+    showToast('🔒 관리 영역이 다시 잠겼습니다.');
+  };
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1967,7 +2022,6 @@ export function App() {
   };
 
   const handleClearNasRemote = async () => {
-    if (!window.confirm('NAS(n8n) 대기열에 저장된 이전 스캔 기록을 비우시겠습니까?')) return;
     try {
       await clearNasRemoteDb(nasWebhookUrl);
       showToast('NAS 대기열 데이터가 초기화되었습니다.');
@@ -3028,53 +3082,151 @@ export function App() {
                   </div>
                 </div>
 
-                {/* ④ NAS 클라우드 동기화 및 기기 설정 */}
-                <div className="settings-section">
-                  <div className="settings-section-title">
-                <span>
-                  <Server size={14} style={{ verticalAlign: 'middle', marginRight: 4 }} />
-                  PC · 스마트폰 클라우드 동기화 (NAS n8n)
-                </span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <input
-                        type="url"
-                        className="mini-input"
-                        style={{ flex: 1 }}
-                        value={nasUrlInput}
-                        onChange={(e) => setNasUrlInput(e.target.value)}
-                        placeholder="https://.../webhook/soi-vocab-inbox"
-                    />
-                    <button type="button" className="submit-btn" onClick={handleSaveNasWebhook}>
-                      저장
-                    </button>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={() => handleSyncFromNas(false, nasUrlInput, true)}
-                    >
-                      🔄 서버 데이터 전체 다시 불러오기
-                    </button>
-                    <button
-                        type="button"
-                        className="secondary-btn"
-                        style={{ color: '#dc2626' }}
-                        onClick={handleClearNasRemote}
-                    >
-                      🗑️ NAS 대기열 비우기
-                    </button>
-                    {deferredPrompt && (
+                {/* ④ NAS 클라우드 동기화 및 기기 설정 (부모/관리자 보호 영역) */}
+                <div className={`nas-protected-card ${isNasUnlocked ? 'unlocked' : 'locked'}`}>
+                  <button
+                    type="button"
+                    className="nas-accordion-header"
+                    onClick={handleToggleNasAccordion}
+                    title={isNasUnlocked ? '동기화 관리 영역 접기/펼치기' : '보호자 PIN 입력 후 열기'}
+                  >
+                    <div className="nas-header-left">
+                      <div className={`nas-lock-icon ${isNasUnlocked ? 'unlocked' : 'locked'}`}>
+                        {isNasUnlocked ? <Unlock size={16} /> : <Lock size={16} />}
+                      </div>
+                      <div className="nas-header-titles">
+                        <span className="nas-main-title">
+                          <Server size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                          PC · 스마트폰 클라우드 동기화 (NAS n8n)
+                        </span>
+                        <span className="nas-sub-title">
+                          {isNasUnlocked
+                            ? '보호자 인증됨 (동기화 설정 가능)'
+                            : '보호자 전용 (오터치 방지 잠금 중)'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="nas-header-right">
+                      <span className={`nas-status-badge ${isNasUnlocked ? 'unlocked' : 'locked'}`}>
+                        {isNasUnlocked ? '보호 해제됨' : '잠김 🔒'}
+                      </span>
+                      <ChevronDown
+                        size={17}
+                        className={`nas-chevron ${isNasAccordionOpen ? 'open' : ''}`}
+                      />
+                    </div>
+                  </button>
+
+                  {isNasAccordionOpen && (
+                    <div className="nas-accordion-body">
+                      {isNasUnlocked && (
+                        <div className="nas-security-strip">
+                          <span>🛡️ 보호자 인증 상태입니다. 작업 후 다시 잠글 수 있습니다.</span>
+                          <button
+                            type="button"
+                            className="nas-re-lock-btn"
+                            onClick={handleLockNasArea}
+                            title="관리자 영역 다시 잠그기"
+                          >
+                            <Lock size={12} />
+                            <span>다시 잠그기</span>
+                          </button>
+                        </div>
+                      )}
+
+                      <div style={{ marginTop: 8 }}>
+                        <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#475569', marginBottom: 4 }}>
+                          NAS n8n 웹훅 URL (Webhook)
+                        </label>
+                        <div className="nas-url-input-wrap">
+                          <input
+                            type={showNasWebhookUrl ? 'text' : 'password'}
+                            className="mini-input nas-url-input"
+                            value={nasUrlInput}
+                            onChange={(e) => setNasUrlInput(e.target.value)}
+                            placeholder="https://.../webhook/soi-vocab-inbox"
+                            autoComplete="off"
+                            autoCorrect="off"
+                            autoCapitalize="off"
+                            spellCheck={false}
+                          />
+                          <button
+                            type="button"
+                            className="nas-eye-btn"
+                            onClick={() => setShowNasWebhookUrl((prev) => !prev)}
+                            title={showNasWebhookUrl ? '주소 숨기기 (마스킹)' : '주소 보기 (평문)'}
+                          >
+                            {showNasWebhookUrl ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </button>
+                          <button
+                            type="button"
+                            className="submit-btn"
+                            onClick={handleSaveNasWebhook}
+                            style={{ flexShrink: 0 }}
+                          >
+                            저장
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="nas-actions-row">
                         <button
+                          type="button"
+                          className="secondary-btn nas-action-btn"
+                          onClick={() => {
+                            setConfirmDialog({
+                              isOpen: true,
+                              title: '서버 데이터 전체 다시 불러오기',
+                              message: '서버(NAS)에 보관된 최신 단어장 데이터로 동기화합니다. 현재 기기에 아직 동기화되지 않은 수정 사항이 있다면 서버 데이터로 덮어씌워질 수 있습니다. 계속 진행하시겠습니까?',
+                              confirmLabel: '네, 다시 불러옵니다',
+                              isDanger: false,
+                              onConfirm: () => {
+                                setConfirmDialog(null);
+                                handleSyncFromNas(false, nasUrlInput, true);
+                              },
+                            });
+                          }}
+                        >
+                          <RefreshCw size={13} />
+                          <span>서버 데이터 전체 다시 불러오기</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="secondary-btn nas-action-btn danger"
+                          onClick={() => {
+                            setConfirmDialog({
+                              isOpen: true,
+                              title: 'NAS 대기열 데이터 비우기',
+                              message: 'NAS(n8n) 서버 대기열에 저장된 이전 스캔 기록을 완전히 비웁니다. 이 작업은 되돌릴 수 없습니다. 정말 비우시겠습니까?',
+                              confirmLabel: '대기열 비우기 실행',
+                              isDanger: true,
+                              onConfirm: () => {
+                                setConfirmDialog(null);
+                                handleClearNasRemote();
+                              },
+                            });
+                          }}
+                        >
+                          <Trash2 size={13} />
+                          <span>NAS 대기열 비우기</span>
+                        </button>
+                      </div>
+
+                      {deferredPrompt && (
+                        <div style={{ marginTop: 8 }}>
+                          <button
                             type="button"
                             className="secondary-btn"
+                            style={{ width: '100%', justifyContent: 'center' }}
                             onClick={handleInstallPwa}
-                        >
-                          <Smartphone size={13} /> 홈 화면에 앱 설치
-                        </button>
-                    )}
-                  </div>
+                          >
+                            <Smartphone size={13} /> 홈 화면에 앱 설치
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* FSRS 과학적 망각곡선 원리 상세 안내 링크 */}
@@ -3218,6 +3370,128 @@ export function App() {
                     저장하기
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 🔒 부모용 4자리 PIN 인증 모달 (NAS 오터치 방지) */}
+        {showNasPinModal && (
+          <div className="gg-modal-backdrop" onClick={() => setShowNasPinModal(false)}>
+            <div className="gg-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 360 }}>
+              <div className="gg-modal-header">
+                <span className="gg-modal-title">
+                  <Lock size={18} color="#eab308" />
+                  보호자 전용 설정 잠금
+                </span>
+                <button
+                  type="button"
+                  className="mini-icon-btn"
+                  onClick={() => setShowNasPinModal(false)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleVerifyParentPin} style={{ marginTop: 12 }}>
+                <p style={{ fontSize: '0.82rem', color: '#64748b', lineHeight: 1.5, margin: '0 0 14px' }}>
+                  아이의 실수 터치 및 오작동을 방지하기 위해 보호자 4자리 PIN을 입력해 주세요.
+                  <span style={{ display: 'block', color: '#854d0e', fontWeight: 700, marginTop: 4 }}>
+                    (기본 비밀번호: 0000)
+                  </span>
+                </p>
+
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={4}
+                    autoFocus
+                    className="parent-pin-input"
+                    value={parentPinInput}
+                    onChange={(e) => {
+                      setParentPinInput(e.target.value);
+                      if (parentPinError) setParentPinError('');
+                    }}
+                    placeholder="••••"
+                  />
+                </div>
+
+                {parentPinError && (
+                  <div style={{ color: '#dc2626', fontSize: '0.78rem', fontWeight: 700, textAlign: 'center', marginBottom: 10 }}>
+                    {parentPinError}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ flex: 1, padding: '10px' }}
+                    onClick={() => setShowNasPinModal(false)}
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="submit"
+                    className="primary-btn"
+                    style={{ flex: 1, padding: '10px', fontWeight: 800 }}
+                  >
+                    확인
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* ⚠️ 중요 작업 실수 방지 2단계 확인 모달 */}
+        {confirmDialog && confirmDialog.isOpen && (
+          <div className="gg-modal-backdrop" onClick={() => setConfirmDialog(null)}>
+            <div className="gg-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400 }}>
+              <div className="gg-modal-header">
+                <span className="gg-modal-title" style={confirmDialog.isDanger ? { color: '#dc2626' } : undefined}>
+                  <AlertTriangle size={18} color={confirmDialog.isDanger ? '#dc2626' : '#eab308'} />
+                  {confirmDialog.title}
+                </span>
+                <button
+                  type="button"
+                  className="mini-icon-btn"
+                  onClick={() => setConfirmDialog(null)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div style={{ padding: '12px 0 16px' }}>
+                <p style={{ fontSize: '0.85rem', color: '#334155', lineHeight: 1.6, margin: 0 }}>
+                  {confirmDialog.message}
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  style={{ padding: '9px 16px' }}
+                  onClick={() => setConfirmDialog(null)}
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  className={`submit-btn ${confirmDialog.isDanger ? 'danger' : ''}`}
+                  style={{
+                    padding: '9px 18px',
+                    fontWeight: 800,
+                    background: confirmDialog.isDanger ? '#dc2626' : '#0f172a',
+                    color: '#ffffff',
+                  }}
+                  onClick={() => confirmDialog.onConfirm()}
+                >
+                  {confirmDialog.confirmLabel}
+                </button>
               </div>
             </div>
           </div>
