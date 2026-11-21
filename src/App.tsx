@@ -2206,140 +2206,142 @@ export function App() {
         {/* 심플하고 현대적인 상단 헤더 */}
         
         <header className="app-header">
-          <div>
-            <div className="title-row">
-              <h1 className="app-title">소이의 단어 암기장</h1>
-              <button
-                  type="button"
-                  className="fsrs-info-btn"
-                  onClick={() => setShowFsrsModal(true)}
-              >
-                <Sparkles size={13} />
-                FSRS 암기법이란?
-              </button>
-            </div>
-            <div className="header-meta-row">
-              <span className="streak-pill" title={`연속 학습 ${stats.streak}일째`}>
-                <Flame size={12} />
-                {stats.streak}일째
-              </span>
-
-              {isCramMode ? (
-                <span className="due-pill" title="자유 복습(벼락치기) 대기 단어">
-                  벼락치기 {dueItems.length}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  className={`daily-goal-pill ${stats.todayReviewed >= dailyGoal ? 'goal-achieved' : ''}`}
-                  onClick={() => setShowBottomStats(true)}
-                  title={`오늘 완료: ${stats.todayReviewed}회 / 목표: ${dailyGoal}회 (전체 대기: ${totalDueInPool}개) - 클릭 시 목표 변경`}
-                >
-                  <span>{stats.todayReviewed >= dailyGoal ? '🏆' : '🎯'}</span>
-                  <span>
-                    오늘 <strong>{stats.todayReviewed}</strong>/{dailyGoal}
-                  </span>
-                  {totalDueInPool > 0 && (
-                    <span className="goal-aux-pending" title={`전체 대기 단어: ${totalDueInPool}개`}>
-                      (대기 {totalDueInPool})
-                    </span>
-                  )}
-                </button>
-              )}
-
-              <button
-                type="button"
-                className="header-folder-pill"
-                onClick={() => setShowGgModal(true)}
-                title={`현재 학습 폴더: ${studyCategory === 'ALL' ? '전체 단어장' : studyCategory} (클릭 시 변경)`}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  background: studyCategory === 'ALL' ? '#f1f5f9' : '#fef9c3',
-                  color: studyCategory === 'ALL' ? '#475569' : '#854d0e',
-                  border: studyCategory === 'ALL' ? '1px solid #cbd5e1' : '1px solid #facc15',
-                  borderRadius: 9999,
-                  padding: '2px 8px',
-                  fontSize: '0.73rem',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  maxWidth: 160,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <FolderOpen size={11} />
-                <span>
-                  {studyCategory === 'ALL' ? '전체' : studyCategory.split('/').pop()}
-                </span>
-                <span style={{ opacity: 0.8, fontSize: '0.68rem', fontWeight: 600 }}>
-                  ({selectedPoolItems.length})
-                </span>
-              </button>
-            </div>
-
-            {/* 오늘의 목표 달성률 얇은 진행률 바 (Thin Progress Bar) */}
-            {!isCramMode && (
-              <div
-                className="daily-progress-wrap"
-                onClick={() => setShowBottomStats(true)}
-                title={`오늘 학습 목표 달성률: ${Math.min(100, Math.round((stats.todayReviewed / dailyGoal) * 100))}% (${stats.todayReviewed}/${dailyGoal} 완료)`}
-              >
-                <div
-                  className={`daily-progress-bar ${stats.todayReviewed >= dailyGoal ? 'achieved' : ''}`}
-                  style={{
-                    width: `${Math.min(100, Math.max(0, (stats.todayReviewed / dailyGoal) * 100))}%`,
-                  }}
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="header-actions">
-            <button
-                type="button"
-                className={`header-direction-btn ${flashcardDirection}`}
-                onClick={handleToggleFlashcardDirection}
-                title="단어 암기 방향 전환 (클릭 시 영→한 / 한→영 / 한·영 랜덤 순환)"
-            >
-              {flashcardDirection === 'en-ko' && <span>영 → 한</span>}
-              {flashcardDirection === 'ko-en' && <span>한 → 영</span>}
-              {flashcardDirection === 'random' && (
-                <>
-                  <Shuffle size={13} />
-                  <span>랜덤</span>
-                </>
-              )}
-            </button>
-            {nasWebhookUrl && (
+          <div className="header-top-bar">
+            <div>
+              <div className="title-row">
+                <h1 className="app-title">소이의 단어 암기장</h1>
                 <button
                     type="button"
-                    className="header-icon-btn"
-                    onClick={() => handleSyncFromNas(false, undefined, false)}
-                    title="PC · 스마트폰 즉시 동기화"
+                    className="fsrs-info-btn"
+                    onClick={() => setShowFsrsModal(true)}
                 >
-                  <RefreshCw size={17} className={isSyncing ? 'spin' : ''} />
+                  <Sparkles size={13} />
+                  FSRS 암기법이란?
                 </button>
-            )}
-            <button
-                type="button"
-                className="header-icon-btn"
-                onClick={() => setShowGgModal(true)}
-                title="문제집 폴더 선택 및 관리"
-            >
-              <FolderOpen size={17} />
-            </button>
-            <button
-                type="button"
-                className="header-icon-btn"
-                onClick={() => setShowBottomStats(true)}
-                title="학습 옵션 & 환경 설정"
-            >
-              <Settings2 size={17} />
-            </button>
+              </div>
+              <div className="header-meta-row">
+                <span className="streak-pill" title={`연속 학습 ${stats.streak}일째`}>
+                  <Flame size={12} />
+                  {stats.streak}일째
+                </span>
+
+                {isCramMode ? (
+                  <span className="due-pill" title="자유 복습(벼락치기) 대기 단어">
+                    벼락치기 {dueItems.length}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className={`daily-goal-pill ${stats.todayReviewed >= dailyGoal ? 'goal-achieved' : ''}`}
+                    onClick={() => setShowBottomStats(true)}
+                    title={`오늘 완료: ${stats.todayReviewed}회 / 목표: ${dailyGoal}회 (전체 대기: ${totalDueInPool}개) - 클릭 시 목표 변경`}
+                  >
+                    <span>{stats.todayReviewed >= dailyGoal ? '🏆' : '🎯'}</span>
+                    <span>
+                      오늘 <strong>{stats.todayReviewed}</strong>/{dailyGoal}
+                    </span>
+                    {totalDueInPool > 0 && (
+                      <span className="goal-aux-pending" title={`전체 대기 단어: ${totalDueInPool}개`}>
+                        (대기 {totalDueInPool})
+                      </span>
+                    )}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  className="header-folder-pill"
+                  onClick={() => setShowGgModal(true)}
+                  title={`현재 학습 폴더: ${studyCategory === 'ALL' ? '전체 단어장' : studyCategory} (클릭 시 변경)`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    background: studyCategory === 'ALL' ? '#f1f5f9' : '#fef9c3',
+                    color: studyCategory === 'ALL' ? '#475569' : '#854d0e',
+                    border: studyCategory === 'ALL' ? '1px solid #cbd5e1' : '1px solid #facc15',
+                    borderRadius: 9999,
+                    padding: '2px 8px',
+                    fontSize: '0.73rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    maxWidth: 160,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <FolderOpen size={11} />
+                  <span>
+                    {studyCategory === 'ALL' ? '전체' : studyCategory.split('/').pop()}
+                  </span>
+                  <span style={{ opacity: 0.8, fontSize: '0.68rem', fontWeight: 600 }}>
+                    ({selectedPoolItems.length})
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <div className="header-actions">
+              <button
+                  type="button"
+                  className={`header-direction-btn ${flashcardDirection}`}
+                  onClick={handleToggleFlashcardDirection}
+                  title="단어 암기 방향 전환 (클릭 시 영→한 / 한→영 / 한·영 랜덤 순환)"
+              >
+                {flashcardDirection === 'en-ko' && <span>영 → 한</span>}
+                {flashcardDirection === 'ko-en' && <span>한 → 영</span>}
+                {flashcardDirection === 'random' && (
+                  <>
+                    <Shuffle size={13} />
+                    <span>랜덤</span>
+                  </>
+                )}
+              </button>
+              {nasWebhookUrl && (
+                  <button
+                      type="button"
+                      className="header-icon-btn"
+                      onClick={() => handleSyncFromNas(false, undefined, false)}
+                      title="PC · 스마트폰 즉시 동기화"
+                  >
+                    <RefreshCw size={17} className={isSyncing ? 'spin' : ''} />
+                  </button>
+              )}
+              <button
+                  type="button"
+                  className="header-icon-btn"
+                  onClick={() => setShowGgModal(true)}
+                  title="문제집 폴더 선택 및 관리"
+              >
+                <FolderOpen size={17} />
+              </button>
+              <button
+                  type="button"
+                  className="header-icon-btn"
+                  onClick={() => setShowBottomStats(true)}
+                  title="학습 옵션 & 환경 설정"
+              >
+                <Settings2 size={17} />
+              </button>
+            </div>
           </div>
+
+          {/* 오늘의 목표 달성률 전체 가로 폭 진행률 바 */}
+          {!isCramMode && (
+            <div
+              className="daily-progress-wrap"
+              onClick={() => setShowBottomStats(true)}
+              title={`오늘 학습 목표 달성률: ${Math.min(100, Math.round((stats.todayReviewed / dailyGoal) * 100))}% (${stats.todayReviewed}/${dailyGoal} 완료)`}
+            >
+              <div
+                className={`daily-progress-bar ${stats.todayReviewed >= dailyGoal ? 'achieved' : ''}`}
+                style={{
+                  width: `${Math.min(100, Math.max(0, (stats.todayReviewed / dailyGoal) * 100))}%`,
+                }}
+              />
+            </div>
+          )}
         </header>
 
         {toastMsg && <div className="toast-banner">{toastMsg}</div>}
